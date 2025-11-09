@@ -3,23 +3,26 @@
 import "./assets/styles/index.scss";
 
 import { ResizeObserver } from "@juggle/resize-observer";
-if (!window.ResizeObserver) {
-  window.ResizeObserver = ResizeObserver;
-}
-
+import { ComposeContextProvider } from "foxact/compose-context-provider";
 import React from "react";
 import { createRoot } from "react-dom/client";
-import { ComposeContextProvider } from "foxact/compose-context-provider";
-import { BrowserRouter } from "react-router-dom";
+import { RouterProvider } from "react-router";
+import { MihomoWebSocket } from "tauri-plugin-mihomo-api";
+
 import { BaseErrorBoundary } from "./components/base";
-import Layout from "./pages/_layout";
+import { router } from "./pages/_routers";
+import { AppDataProvider } from "./providers/app-data-provider";
+import { WindowProvider } from "./providers/window";
 import { initializeLanguage } from "./services/i18n";
 import {
   LoadingCacheProvider,
   ThemeModeProvider,
   UpdateStateProvider,
 } from "./services/states";
-import { AppDataProvider } from "./providers/app-data-provider";
+
+if (!window.ResizeObserver) {
+  window.ResizeObserver = ResizeObserver;
+}
 
 const mainElementId = "root";
 const container = document.getElementById(mainElementId);
@@ -44,41 +47,30 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
-const initializeApp = async () => {
-  try {
-    await initializeLanguage("zh");
+const initializeApp = () => {
+  const contexts = [
+    <ThemeModeProvider key="theme" />,
+    <LoadingCacheProvider key="loading" />,
+    <UpdateStateProvider key="update" />,
+  ];
 
-    const contexts = [
-      <ThemeModeProvider key="theme" />,
-      <LoadingCacheProvider key="loading" />,
-      <UpdateStateProvider key="update" />,
-    ];
-
-    const root = createRoot(container);
-    root.render(
-      <React.StrictMode>
-        <ComposeContextProvider contexts={contexts}>
-          <BaseErrorBoundary>
+  const root = createRoot(container);
+  root.render(
+    <React.StrictMode>
+      <ComposeContextProvider contexts={contexts}>
+        <BaseErrorBoundary>
+          <WindowProvider>
             <AppDataProvider>
-              <BrowserRouter>
-                <Layout />
-              </BrowserRouter>
+              <RouterProvider router={router} />
             </AppDataProvider>
-          </BaseErrorBoundary>
-        </ComposeContextProvider>
-      </React.StrictMode>,
-    );
-  } catch (error) {
-    console.error("[main.tsx] 应用初始化失败:", error);
-    const root = createRoot(container);
-    root.render(
-      <div style={{ padding: "20px", color: "red" }}>
-        应用初始化失败: {error instanceof Error ? error.message : String(error)}
-      </div>,
-    );
-  }
+          </WindowProvider>
+        </BaseErrorBoundary>
+      </ComposeContextProvider>
+    </React.StrictMode>,
+  );
 };
 
+initializeLanguage("zh").catch(console.error);
 initializeApp();
 
 // 错误处理
@@ -88,4 +80,10 @@ window.addEventListener("error", (event) => {
 
 window.addEventListener("unhandledrejection", (event) => {
   console.error("[main.tsx] 未处理的Promise拒绝:", event.reason);
+});
+
+// 页面关闭/刷新事件
+window.addEventListener("beforeunload", () => {
+  // 同步清理所有 WebSocket 实例, 防止内存泄漏
+  MihomoWebSocket.cleanupAll();
 });

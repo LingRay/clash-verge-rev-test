@@ -1,38 +1,39 @@
-import { useTranslation } from "react-i18next";
+import {
+  DnsOutlined,
+  HelpOutlineRounded,
+  HistoryEduOutlined,
+  RouterOutlined,
+  SettingsOutlined,
+  SpeedOutlined,
+} from "@mui/icons-material";
 import {
   Box,
   Button,
-  IconButton,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  FormGroup,
-  FormControlLabel,
   Checkbox,
-  Tooltip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  FormControlLabel,
+  FormGroup,
   Grid,
+  IconButton,
   Skeleton,
+  Tooltip,
 } from "@mui/material";
-import { useVerge } from "@/hooks/use-verge";
-import { useProfiles } from "@/hooks/use-profiles";
-import {
-  RouterOutlined,
-  SettingsOutlined,
-  DnsOutlined,
-  SpeedOutlined,
-  HelpOutlineRounded,
-  HistoryEduOutlined,
-} from "@mui/icons-material";
-import { ProxyTunCard } from "@/components/home/proxy-tun-card";
-import { ClashModeCard } from "@/components/home/clash-mode-card";
-import { EnhancedTrafficStats } from "@/components/home/enhanced-traffic-stats";
-import { useState, useMemo, Suspense, lazy, useCallback } from "react";
-import { HomeProfileCard } from "@/components/home/home-profile-card";
-import { EnhancedCard } from "@/components/home/enhanced-card";
-import { CurrentProxyCard } from "@/components/home/current-proxy-card";
-import { BasePage } from "@/components/base";
 import { useLockFn } from "ahooks";
+import { Suspense, lazy, useCallback, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
+
+import { BasePage } from "@/components/base";
+import { ClashModeCard } from "@/components/home/clash-mode-card";
+import { CurrentProxyCard } from "@/components/home/current-proxy-card";
+import { EnhancedCard } from "@/components/home/enhanced-card";
+import { EnhancedTrafficStats } from "@/components/home/enhanced-traffic-stats";
+import { HomeProfileCard } from "@/components/home/home-profile-card";
+import { ProxyTunCard } from "@/components/home/proxy-tun-card";
+import { useProfiles } from "@/hooks/use-profiles";
+import { useVerge } from "@/hooks/use-verge";
 import { entry_lightweight_mode, openWebUrl } from "@/services/cmds";
 
 const LazyTestCard = lazy(() =>
@@ -78,6 +79,12 @@ interface HomeSettingsDialogProps {
   homeCards: HomeCardsSettings;
   onSave: (cards: HomeCardsSettings) => void;
 }
+
+const serializeCardFlags = (cards: HomeCardsSettings) =>
+  Object.keys(cards)
+    .sort()
+    .map((key) => `${key}:${cards[key] ? 1 : 0}`)
+    .join("|");
 
 // 首页设置对话框组件
 const HomeSettingsDialog = ({
@@ -201,13 +208,17 @@ const HomeSettingsDialog = ({
   );
 };
 
-export const HomePage = () => {
+const HomePage = () => {
   const { t } = useTranslation();
   const { verge } = useVerge();
   const { current, mutateProfiles } = useProfiles();
 
   // 设置弹窗的状态
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [localHomeCards, setLocalHomeCards] = useState<{
+    value: HomeCardsSettings;
+    baseSignature: string;
+  } | null>(null);
 
   // 卡片显示状态
   const defaultCards = useMemo<HomeCardsSettings>(
@@ -226,9 +237,29 @@ export const HomePage = () => {
     [],
   );
 
-  const [homeCards, setHomeCards] = useState<HomeCardsSettings>(() => {
-    return (verge?.home_cards as HomeCardsSettings) || defaultCards;
-  });
+  const vergeHomeCards = useMemo<HomeCardsSettings | null>(
+    () => (verge?.home_cards as HomeCardsSettings | undefined) ?? null,
+    [verge],
+  );
+
+  const remoteHomeCards = useMemo<HomeCardsSettings>(
+    () => vergeHomeCards ?? defaultCards,
+    [defaultCards, vergeHomeCards],
+  );
+
+  const remoteSignature = useMemo(
+    () => serializeCardFlags(remoteHomeCards),
+    [remoteHomeCards],
+  );
+
+  const pendingLocalCards = useMemo<HomeCardsSettings | null>(() => {
+    if (!localHomeCards) return null;
+    return localHomeCards.baseSignature === remoteSignature
+      ? localHomeCards.value
+      : null;
+  }, [localHomeCards, remoteSignature]);
+
+  const effectiveHomeCards = pendingLocalCards ?? remoteHomeCards;
 
   // 文档链接函数
   const toGithubDoc = useLockFn(() => {
@@ -242,7 +273,7 @@ export const HomePage = () => {
 
   const renderCard = useCallback(
     (cardKey: string, component: React.ReactNode, size: number = 6) => {
-      if (!homeCards[cardKey]) return null;
+      if (!effectiveHomeCards[cardKey]) return null;
 
       return (
         <Grid size={size} key={cardKey}>
@@ -250,7 +281,7 @@ export const HomePage = () => {
         </Grid>
       );
     },
-    [homeCards],
+    [effectiveHomeCards],
   );
 
   const criticalCards = useMemo(
@@ -263,15 +294,27 @@ export const HomePage = () => {
       renderCard("network", <NetworkSettingsCard />),
       renderCard("mode", <ClashModeEnhancedCard />),
     ],
-    [homeCards, current, mutateProfiles, renderCard],
+    [current, mutateProfiles, renderCard],
   );
 
   // 新增：保存设置时用requestIdleCallback/setTimeout
   const handleSaveSettings = (newCards: HomeCardsSettings) => {
     if (window.requestIdleCallback) {
-      window.requestIdleCallback(() => setHomeCards(newCards));
+      window.requestIdleCallback(() =>
+        setLocalHomeCards({
+          value: newCards,
+          baseSignature: remoteSignature,
+        }),
+      );
     } else {
-      setTimeout(() => setHomeCards(newCards), 0);
+      setTimeout(
+        () =>
+          setLocalHomeCards({
+            value: newCards,
+            baseSignature: remoteSignature,
+          }),
+        0,
+      );
     }
   };
 
@@ -313,9 +356,12 @@ export const HomePage = () => {
         </Suspense>,
       ),
     ],
-    [homeCards, t, renderCard],
+    [t, renderCard],
   );
-
+  const dialogKey = useMemo(
+    () => `${serializeCardFlags(effectiveHomeCards)}:${settingsOpen ? 1 : 0}`,
+    [effectiveHomeCards, settingsOpen],
+  );
   return (
     <BasePage
       title={t("Label-Home")}
@@ -352,9 +398,10 @@ export const HomePage = () => {
 
       {/* 首页设置弹窗 */}
       <HomeSettingsDialog
+        key={dialogKey}
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
-        homeCards={homeCards}
+        homeCards={effectiveHomeCards}
         onSave={handleSaveSettings}
       />
     </BasePage>

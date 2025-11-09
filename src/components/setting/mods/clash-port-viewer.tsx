@@ -1,8 +1,3 @@
-import { BaseDialog, Switch } from "@/components/base";
-import { useClashInfo } from "@/hooks/use-clash";
-import { useVerge } from "@/hooks/use-verge";
-import { showNotice } from "@/services/noticeService";
-import getSystem from "@/utils/get-system";
 import { Shuffle } from "@mui/icons-material";
 import {
   CircularProgress,
@@ -17,9 +12,13 @@ import { useLockFn, useRequest } from "ahooks";
 import { forwardRef, useImperativeHandle, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-const OS = getSystem();
+import { BaseDialog, Switch } from "@/components/base";
+import { useClashInfo } from "@/hooks/use-clash";
+import { useVerge } from "@/hooks/use-verge";
+import { showNotice } from "@/services/noticeService";
+import getSystem from "@/utils/get-system";
 
-interface ClashPortViewerProps {}
+const OS = getSystem();
 
 interface ClashPortViewerRef {
   open: () => void;
@@ -29,10 +28,7 @@ interface ClashPortViewerRef {
 const generateRandomPort = () =>
   Math.floor(Math.random() * (65535 - 1025 + 1)) + 1025;
 
-export const ClashPortViewer = forwardRef<
-  ClashPortViewerRef,
-  ClashPortViewerProps
->((props, ref) => {
+export const ClashPortViewer = forwardRef<ClashPortViewerRef>((_, ref) => {
   const { t } = useTranslation();
   const { clashInfo, patchInfo } = useClashInfo();
   const { verge, patchVerge } = useVerge();
@@ -73,10 +69,11 @@ export const ClashPortViewer = forwardRef<
       manual: true,
       onSuccess: () => {
         setOpen(false);
-        showNotice("success", t("Port settings saved")); // 调用提示函数
+        showNotice("success", t("Port settings saved"));
       },
-      onError: () => {
-        showNotice("error", t("Failed to save settings")); // 调用提示函数
+      onError: (e) => {
+        showNotice("error", e.message || t("Failed to save port settings"));
+        // showNotice("error", t("Failed to save port settings"));
       },
     },
   );
@@ -153,7 +150,7 @@ export const ClashPortViewer = forwardRef<
   return (
     <BaseDialog
       open={open}
-      title={t("Port Configuration")}
+      title={t("Port Config")}
       contentSx={{
         width: 400,
       }}
@@ -176,7 +173,7 @@ export const ClashPortViewer = forwardRef<
         <ListItem sx={{ padding: "4px 0", minHeight: 36 }}>
           <ListItemText
             primary={t("Mixed Port")}
-            primaryTypographyProps={{ fontSize: 12 }}
+            slotProps={{ primary: { sx: { fontSize: 12 } } }}
           />
           <div style={{ display: "flex", alignItems: "center" }}>
             <TextField
@@ -186,7 +183,7 @@ export const ClashPortViewer = forwardRef<
               onChange={(e) =>
                 setMixedPort(+e.target.value?.replace(/\D+/, "").slice(0, 5))
               }
-              inputProps={{ style: { fontSize: 12 } }}
+              slotProps={{ htmlInput: { style: { fontSize: 12 } } }}
             />
             <IconButton
               size="small"
@@ -208,7 +205,7 @@ export const ClashPortViewer = forwardRef<
         <ListItem sx={{ padding: "4px 0", minHeight: 36 }}>
           <ListItemText
             primary={t("Socks Port")}
-            primaryTypographyProps={{ fontSize: 12 }}
+            slotProps={{ primary: { sx: { fontSize: 12 } } }}
           />
           <div style={{ display: "flex", alignItems: "center" }}>
             <TextField
@@ -219,7 +216,7 @@ export const ClashPortViewer = forwardRef<
                 setSocksPort(+e.target.value?.replace(/\D+/, "").slice(0, 5))
               }
               disabled={!socksEnabled}
-              inputProps={{ style: { fontSize: 12 } }}
+              slotProps={{ htmlInput: { style: { fontSize: 12 } } }}
             />
             <IconButton
               size="small"
@@ -242,7 +239,7 @@ export const ClashPortViewer = forwardRef<
         <ListItem sx={{ padding: "4px 0", minHeight: 36 }}>
           <ListItemText
             primary={t("Http Port")}
-            primaryTypographyProps={{ fontSize: 12 }}
+            slotProps={{ primary: { sx: { fontSize: 12 } } }}
           />
           <div style={{ display: "flex", alignItems: "center" }}>
             <TextField
@@ -253,7 +250,7 @@ export const ClashPortViewer = forwardRef<
                 setHttpPort(+e.target.value?.replace(/\D+/, "").slice(0, 5))
               }
               disabled={!httpEnabled}
-              inputProps={{ style: { fontSize: 12 } }}
+              slotProps={{ htmlInput: { style: { fontSize: 12 } } }}
             />
             <IconButton
               size="small"
@@ -277,7 +274,7 @@ export const ClashPortViewer = forwardRef<
           <ListItem sx={{ padding: "4px 0", minHeight: 36 }}>
             <ListItemText
               primary={t("Redir Port")}
-              primaryTypographyProps={{ fontSize: 12 }}
+              slotProps={{ primary: { sx: { fontSize: 12 } } }}
             />
             <div style={{ display: "flex", alignItems: "center" }}>
               <TextField
@@ -288,7 +285,7 @@ export const ClashPortViewer = forwardRef<
                   setRedirPort(+e.target.value?.replace(/\D+/, "").slice(0, 5))
                 }
                 disabled={!redirEnabled}
-                inputProps={{ style: { fontSize: 12 } }}
+                slotProps={{ htmlInput: { style: { fontSize: 12 } } }}
               />
               <IconButton
                 size="small"
@@ -313,7 +310,7 @@ export const ClashPortViewer = forwardRef<
           <ListItem sx={{ padding: "4px 0", minHeight: 36 }}>
             <ListItemText
               primary={t("Tproxy Port")}
-              primaryTypographyProps={{ fontSize: 12 }}
+              slotProps={{ primary: { sx: { fontSize: 12 } } }}
             />
             <div style={{ display: "flex", alignItems: "center" }}>
               <TextField
@@ -324,7 +321,7 @@ export const ClashPortViewer = forwardRef<
                   setTproxyPort(+e.target.value?.replace(/\D+/, "").slice(0, 5))
                 }
                 disabled={!tproxyEnabled}
-                inputProps={{ style: { fontSize: 12 } }}
+                slotProps={{ htmlInput: { style: { fontSize: 12 } } }}
               />
               <IconButton
                 size="small"

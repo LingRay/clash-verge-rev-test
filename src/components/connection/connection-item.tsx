@@ -1,5 +1,4 @@
-import dayjs from "dayjs";
-import { useLockFn } from "ahooks";
+import { CloseRounded } from "@mui/icons-material";
 import {
   styled,
   ListItem,
@@ -8,8 +7,10 @@ import {
   Box,
   alpha,
 } from "@mui/material";
-import { CloseRounded } from "@mui/icons-material";
-import { deleteConnection } from "@/services/cmds";
+import { useLockFn } from "ahooks";
+import dayjs from "dayjs";
+import { closeConnections } from "tauri-plugin-mihomo-api";
+
 import parseTraffic from "@/utils/parse-traffic";
 
 const Tag = styled("span")(({ theme }) => ({
@@ -33,7 +34,7 @@ export const ConnectionItem = (props: Props) => {
 
   const { id, metadata, chains, start, curUpload, curDownload } = value;
 
-  const onDelete = useLockFn(async () => deleteConnection(id));
+  const onDelete = useLockFn(async () => closeConnections(id));
   const showTraffic = curUpload! >= 100 || curDownload! >= 100;
 
   return (

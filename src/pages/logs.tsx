@@ -1,39 +1,32 @@
-import { useMemo, useState } from "react";
-import { Box, Button, IconButton, MenuItem } from "@mui/material";
-import { Virtuoso } from "react-virtuoso";
-import { useTranslation } from "react-i18next";
-import { useLocalStorage } from "foxact/use-local-storage";
-
 import {
   PlayCircleOutlineRounded,
   PauseCircleOutlineRounded,
 } from "@mui/icons-material";
-import { LogLevel } from "@/hooks/use-log-data";
-import { useEnableLog } from "@/services/states";
-import { BaseEmpty, BasePage } from "@/components/base";
-import LogItem from "@/components/log/log-item";
-import { BaseSearchBox } from "@/components/base/base-search-box";
-import { BaseStyledSelect } from "@/components/base/base-styled-select";
-import { SearchState } from "@/components/base/base-search-box";
-import {
-  useGlobalLogData,
-  clearGlobalLogs,
-  changeLogLevel,
-  toggleLogEnabled,
-} from "@/services/global-log-service";
+import { Box, Button, IconButton, MenuItem } from "@mui/material";
+import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { Virtuoso } from "react-virtuoso";
 
-// 后端通过 /logs?level={level} 进行筛选，前端不再需要手动筛选日志级别
+import { BaseEmpty, BasePage } from "@/components/base";
+import { BaseSearchBox } from "@/components/base/base-search-box";
+import { SearchState } from "@/components/base/base-search-box";
+import { BaseStyledSelect } from "@/components/base/base-styled-select";
+import LogItem from "@/components/log/log-item";
+import { useLogData } from "@/hooks/use-log-data";
+import { LogFilter, useClashLog } from "@/services/states";
 
 const LogPage = () => {
   const { t } = useTranslation();
-  const [enableLog, setEnableLog] = useEnableLog();
-  const [logLevel, setLogLevel] = useLocalStorage<LogLevel>(
-    "log:log-level",
-    "info",
-  );
+  const [clashLog, setClashLog] = useClashLog();
+  const enableLog = clashLog.enable;
+  const logState = clashLog.logFilter;
+
   const [match, setMatch] = useState(() => (_: string) => true);
-  const logData = useGlobalLogData("all");
   const [searchState, setSearchState] = useState<SearchState>();
+  const {
+    response: { data: logData },
+    refreshGetClashLog,
+  } = useLogData();
 
   const filterLogs = useMemo(() => {
     if (!logData || logData.length === 0) {
@@ -49,18 +42,19 @@ const LogPage = () => {
 
       const matchesSearch = match(searchText);
 
-      return matchesSearch;
+      return (
+        (logState == "all" ? true : data.type.includes(logState)) &&
+        matchesSearch
+      );
     });
-  }, [logData, match]);
+  }, [logData, logState, match]);
 
-  const handleLogLevelChange = (newLevel: LogLevel) => {
-    setLogLevel(newLevel);
-    changeLogLevel(newLevel);
+  const handleLogLevelChange = (newLevel: string) => {
+    setClashLog((pre: any) => ({ ...pre, logFilter: newLevel }));
   };
 
   const handleToggleLog = async () => {
-    await toggleLogEnabled();
-    setEnableLog(!enableLog);
+    setClashLog((pre: any) => ({ ...pre, enable: !enableLog }));
   };
 
   return (
@@ -92,7 +86,7 @@ const LogPage = () => {
             size="small"
             variant="contained"
             onClick={() => {
-              clearGlobalLogs();
+              refreshGetClashLog(true);
             }}
           >
             {t("Clear")}
@@ -111,14 +105,14 @@ const LogPage = () => {
         }}
       >
         <BaseStyledSelect
-          value={logLevel}
-          onChange={(e) => handleLogLevelChange(e.target.value as LogLevel)}
+          value={logState}
+          onChange={(e) => handleLogLevelChange(e.target.value as LogFilter)}
         >
           <MenuItem value="all">ALL</MenuItem>
           <MenuItem value="debug">DEBUG</MenuItem>
           <MenuItem value="info">INFO</MenuItem>
-          <MenuItem value="warning">WARNING</MenuItem>
-          <MenuItem value="error">ERROR</MenuItem>
+          <MenuItem value="warn">WARN</MenuItem>
+          <MenuItem value="err">ERROR</MenuItem>
         </BaseStyledSelect>
         <BaseSearchBox
           onSearch={(matcher, state) => {

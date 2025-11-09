@@ -1,162 +1,233 @@
-use crate::{
-    config::Config,
-    core::{handle, sysopt, CoreManager},
-    ipc::IpcManager,
-    logging,
-    utils::logging::Type,
-};
+use crate::config::Config;
+use crate::core::event_driven_proxy::EventDrivenProxyManager;
+use crate::core::{CoreManager, handle, sysopt};
+use crate::utils;
+use crate::utils::window_manager::WindowManager;
+use crate::{logging, module::lightweight, utils::logging::Type};
 
-/// Open or close the dashboard window
-#[allow(dead_code)]
+/// Public API: open or close the dashboard
 pub async fn open_or_close_dashboard() {
-    open_or_close_dashboard_internal(false).await
-}
-
-/// Open or close the dashboard window (hotkey call, dispatched to main thread)
-#[allow(dead_code)]
-pub async fn open_or_close_dashboard_hotkey() {
-    open_or_close_dashboard_internal(true).await
+    open_or_close_dashboard_internal().await
 }
 
 /// Internal implementation for opening/closing dashboard
-async fn open_or_close_dashboard_internal(bypass_debounce: bool) {
-    use crate::utils::window_manager::WindowManager;
-
-    log::info!(target: "app", "Attempting to open/close dashboard (绕过防抖: {bypass_debounce})");
-
-    // 热键调用调度到主线程执行，避免 WebView 创建死锁
-    if bypass_debounce {
-        log::info!(target: "app", "热键调用，调度到主线程执行窗口操作");
-
-        log::info!(target: "app", "主线程中执行热键窗口操作");
-
-        if crate::module::lightweight::is_in_lightweight_mode() {
-            log::info!(target: "app", "Currently in lightweight mode, exiting lightweight mode");
-            crate::module::lightweight::exit_lightweight_mode().await;
-            log::info!(target: "app", "Creating new window after exiting lightweight mode");
-            let result = WindowManager::show_main_window().await;
-            log::info!(target: "app", "Window operation result: {result:?}");
-            return;
-        }
-
-        let result = WindowManager::toggle_main_window().await;
-        log::info!(target: "app", "Window toggle result: {result:?}");
-        return;
-    }
-    if crate::module::lightweight::is_in_lightweight_mode() {
-        log::info!(target: "app", "Currently in lightweight mode, exiting lightweight mode");
-        crate::module::lightweight::exit_lightweight_mode().await;
-        log::info!(target: "app", "Creating new window after exiting lightweight mode");
-        let result = WindowManager::show_main_window().await;
-        log::info!(target: "app", "Window operation result: {result:?}");
-        return;
-    }
-
+async fn open_or_close_dashboard_internal() {
+    let _ = lightweight::exit_lightweight_mode().await;
     let result = WindowManager::toggle_main_window().await;
-    log::info!(target: "app", "Window toggle result: {result:?}");
+    logging!(info, Type::Window, "Window toggle result: {result:?}");
 }
 
-/// 异步优化的应用退出函数
 pub async fn quit() {
-    logging!(debug, Type::System, true, "启动退出流程");
+    logging!(debug, Type::System, "启动退出流程");
+    utils::server::shutdown_embedded_server();
 
     // 获取应用句柄并设置退出标志
-    let Some(app_handle) = handle::Handle::global().app_handle() else {
-        logging!(
-            error,
-            Type::System,
-            "Failed to get app handle for quit operation"
-        );
-        return;
-    };
+    let app_handle = handle::Handle::app_handle();
     handle::Handle::global().set_is_exiting();
+    EventDrivenProxyManager::global().notify_app_stopping();
 
-    // 优先关闭窗口，提供立即反馈
-    if let Some(window) = handle::Handle::global().get_window() {
-        let _ = window.hide();
-        log::info!(target: "app", "窗口已隐藏");
-    }
-
-    // 使用异步任务处理资源清理，避免阻塞
-    logging!(info, Type::System, true, "开始异步清理资源");
+    logging!(info, Type::System, "开始异步清理资源");
     let cleanup_result = clean_async().await;
 
     logging!(
         info,
         Type::System,
-        true,
         "资源清理完成，退出代码: {}",
         if cleanup_result { 0 } else { 1 }
     );
     app_handle.exit(if cleanup_result { 0 } else { 1 });
 }
 
-async fn clean_async() -> bool {
-    use tokio::time::{timeout, Duration};
+pub async fn clean_async() -> bool {
+    use tokio::time::{Duration, timeout};
 
-    logging!(info, Type::System, true, "开始执行异步清理操作...");
+    logging!(info, Type::System, "开始执行异步清理操作...");
 
     // 1. 处理TUN模式
-    let tun_success = if Config::verge()
-        .await
-        .data_mut()
-        .enable_tun_mode
-        .unwrap_or(false)
-    {
-        let disable_tun = serde_json::json!({"tun": {"enable": false}});
+    let tun_task = async {
+        let tun_enabled = Config::verge()
+            .await
+            .latest_arc()
+            .enable_tun_mode
+            .unwrap_or(false);
+
+        if !tun_enabled {
+            return true;
+        }
+
+        let disable_tun = serde_json::json!({ "tun": { "enable": false } });
+
+        #[cfg(target_os = "windows")]
+        let tun_timeout = Duration::from_millis(100);
+        #[cfg(not(target_os = "windows"))]
+        let tun_timeout = Duration::from_millis(100);
+
         match timeout(
-            Duration::from_secs(3),
-            IpcManager::global().patch_configs(disable_tun),
+            tun_timeout,
+            handle::Handle::mihomo()
+                .await
+                .patch_base_config(&disable_tun),
         )
         .await
         {
             Ok(Ok(_)) => {
-                log::info!(target: "app", "TUN模式已禁用");
-                tokio::time::sleep(Duration::from_millis(300)).await;
+                logging!(info, Type::Window, "TUN模式已禁用");
                 true
             }
             Ok(Err(e)) => {
-                log::warn!(target: "app", "禁用TUN模式失败: {e}");
-                false
+                logging!(warn, Type::Window, "Warning: 禁用TUN模式失败: {e}");
+                // 超时不阻塞退出
+                true
             }
             Err(_) => {
-                log::warn!(target: "app", "禁用TUN模式超时");
-                false
+                logging!(
+                    warn,
+                    Type::Window,
+                    "Warning: 禁用TUN模式超时（可能系统正在关机），继续退出流程"
+                );
+                true
             }
         }
-    } else {
-        true
     };
 
     // 2. 系统代理重置
     let proxy_task = async {
-        match timeout(
-            Duration::from_secs(3),
-            sysopt::Sysopt::global().reset_sysproxy(),
-        )
-        .await
+        #[cfg(target_os = "windows")]
         {
-            Ok(_) => {
-                log::info!(target: "app", "系统代理已重置");
-                true
+            use sysproxy::{Autoproxy, Sysproxy};
+            use winapi::um::winuser::{GetSystemMetrics, SM_SHUTTINGDOWN};
+
+            // 检查系统代理是否开启
+            let sys_proxy_enabled = Config::verge()
+                .await
+                .latest_arc()
+                .enable_system_proxy
+                .unwrap_or(false);
+
+            if !sys_proxy_enabled {
+                logging!(info, Type::Window, "系统代理未启用，跳过重置");
+                return true;
             }
-            Err(_) => {
-                log::warn!(target: "app", "重置系统代理超时");
-                false
+
+            // 检查是否正在关机
+            let is_shutting_down = unsafe { GetSystemMetrics(SM_SHUTTINGDOWN) != 0 };
+
+            if is_shutting_down {
+                // sysproxy-rs 操作注册表(避免.exe的dll错误)
+                logging!(
+                    info,
+                    Type::Window,
+                    "检测到正在关机，syspro-rs操作注册表关闭系统代理"
+                );
+
+                match Sysproxy::get_system_proxy() {
+                    Ok(mut sysproxy) => {
+                        sysproxy.enable = false;
+                        if let Err(e) = sysproxy.set_system_proxy() {
+                            logging!(warn, Type::Window, "Warning: 关机时关闭系统代理失败: {e}");
+                        } else {
+                            logging!(info, Type::Window, "系统代理已关闭（通过注册表）");
+                        }
+                    }
+                    Err(e) => {
+                        logging!(warn, Type::Window, "Warning: 关机时获取代理设置失败: {e}");
+                    }
+                }
+
+                // 关闭自动代理配置
+                if let Ok(mut autoproxy) = Autoproxy::get_auto_proxy() {
+                    autoproxy.enable = false;
+                    let _ = autoproxy.set_auto_proxy();
+                }
+
+                return true;
+            }
+
+            // 正常退出：使用 sysproxy.exe 重置代理
+            logging!(info, Type::Window, "sysproxy.exe重置系统代理");
+
+            match timeout(
+                Duration::from_secs(2),
+                sysopt::Sysopt::global().reset_sysproxy(),
+            )
+            .await
+            {
+                Ok(Ok(_)) => {
+                    logging!(info, Type::Window, "系统代理已重置");
+                    true
+                }
+                Ok(Err(e)) => {
+                    logging!(warn, Type::Window, "Warning: 重置系统代理失败: {e}");
+                    true
+                }
+                Err(_) => {
+                    logging!(
+                        warn,
+                        Type::Window,
+                        "Warning: 重置系统代理超时，继续退出流程"
+                    );
+                    true
+                }
+            }
+        }
+
+        // 非 Windows 平台：正常重置代理
+        #[cfg(not(target_os = "windows"))]
+        {
+            let sys_proxy_enabled = Config::verge()
+                .await
+                .latest_arc()
+                .enable_system_proxy
+                .unwrap_or(false);
+
+            if !sys_proxy_enabled {
+                logging!(info, Type::Window, "系统代理未启用，跳过重置");
+                return true;
+            }
+
+            logging!(info, Type::Window, "开始重置系统代理...");
+
+            match timeout(
+                Duration::from_millis(1500),
+                sysopt::Sysopt::global().reset_sysproxy(),
+            )
+            .await
+            {
+                Ok(Ok(_)) => {
+                    logging!(info, Type::Window, "系统代理已重置");
+                    true
+                }
+                Ok(Err(e)) => {
+                    logging!(warn, Type::Window, "Warning: 重置系统代理失败: {e}");
+                    true
+                }
+                Err(_) => {
+                    logging!(warn, Type::Window, "Warning: 重置系统代理超时，继续退出");
+                    true
+                }
             }
         }
     };
 
     // 3. 核心服务停止
     let core_task = async {
-        match timeout(Duration::from_secs(3), CoreManager::global().stop_core()).await {
+        #[cfg(target_os = "windows")]
+        let stop_timeout = Duration::from_secs(2);
+        #[cfg(not(target_os = "windows"))]
+        let stop_timeout = Duration::from_secs(3);
+
+        match timeout(stop_timeout, CoreManager::global().stop_core()).await {
             Ok(_) => {
-                log::info!(target: "app", "核心服务已停止");
+                logging!(info, Type::Window, "core已停止");
                 true
             }
             Err(_) => {
-                log::warn!(target: "app", "停止核心服务超时");
-                false
+                logging!(
+                    warn,
+                    Type::Window,
+                    "Warning: 停止core超时（可能系统正在关机），继续退出"
+                );
+                true
             }
         }
     };
@@ -171,30 +242,28 @@ async fn clean_async() -> bool {
         .await
         {
             Ok(_) => {
-                log::info!(target: "app", "DNS设置已恢复");
+                logging!(info, Type::Window, "DNS设置已恢复");
                 true
             }
             Err(_) => {
-                log::warn!(target: "app", "恢复DNS设置超时");
+                logging!(warn, Type::Window, "Warning: 恢复DNS设置超时");
                 false
             }
         }
     };
 
-    // 并行执行剩余清理任务
-    let (proxy_success, core_success) = tokio::join!(proxy_task, core_task);
-
-    #[cfg(target_os = "macos")]
-    let dns_success = dns_task.await;
     #[cfg(not(target_os = "macos"))]
-    let dns_success = true;
+    let dns_task = async { true };
+
+    let tun_success = tun_task.await;
+    // 并行执行清理任务
+    let (proxy_success, core_success, dns_success) = tokio::join!(proxy_task, core_task, dns_task);
 
     let all_success = tun_success && proxy_success && core_success && dns_success;
 
     logging!(
         info,
         Type::System,
-        true,
         "异步关闭操作完成 - TUN: {}, 代理: {}, 核心: {}, DNS: {}, 总体: {}",
         tun_success,
         proxy_success,
@@ -212,26 +281,29 @@ pub fn clean() -> bool {
     let (tx, rx) = std::sync::mpsc::channel();
 
     AsyncHandler::spawn(move || async move {
-        logging!(info, Type::System, true, "开始执行关闭操作...");
+        logging!(info, Type::System, "开始执行关闭操作...");
 
         // 使用已有的异步清理函数
         let cleanup_result = clean_async().await;
 
-        // 发送结果
         let _ = tx.send(cleanup_result);
     });
 
-    match rx.recv_timeout(std::time::Duration::from_secs(8)) {
+    #[cfg(target_os = "windows")]
+    let total_timeout = std::time::Duration::from_secs(5);
+    #[cfg(not(target_os = "windows"))]
+    let total_timeout = std::time::Duration::from_secs(8);
+
+    match rx.recv_timeout(total_timeout) {
         Ok(result) => {
-            logging!(info, Type::System, true, "关闭操作完成，结果: {}", result);
+            logging!(info, Type::System, "关闭操作完成，结果: {}", result);
             result
         }
         Err(_) => {
             logging!(
                 warn,
                 Type::System,
-                true,
-                "清理操作超时，返回成功状态避免阻塞"
+                "清理操作超时(可能正在关机)，返回成功避免阻塞"
             );
             true
         }
@@ -244,7 +316,7 @@ pub async fn hide() {
 
     let enable_auto_light_weight_mode = Config::verge()
         .await
-        .data_mut()
+        .latest_arc()
         .enable_auto_light_weight_mode
         .unwrap_or(false);
 
@@ -252,10 +324,10 @@ pub async fn hide() {
         add_light_weight_timer().await;
     }
 
-    if let Some(window) = handle::Handle::global().get_window() {
-        if window.is_visible().unwrap_or(false) {
-            let _ = window.hide();
-        }
+    if let Some(window) = handle::Handle::get_window()
+        && window.is_visible().unwrap_or(false)
+    {
+        let _ = window.hide();
     }
     handle::Handle::global().set_activation_policy_accessory();
 }

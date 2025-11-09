@@ -1,12 +1,19 @@
 use super::resolve;
 use crate::{
-    config::{Config, IVerge, DEFAULT_PAC},
-    logging_error,
+    config::{Config, DEFAULT_PAC, IVerge},
+    logging, logging_error,
+    module::lightweight,
     process::AsyncHandler,
-    utils::logging::Type,
+    utils::{logging::Type, window_manager::WindowManager},
 };
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
+use once_cell::sync::OnceCell;
+use parking_lot::Mutex;
 use port_scanner::local_port_available;
+use reqwest::ClientBuilder;
+use smartstring::alias::String;
+use std::time::Duration;
+use tokio::sync::oneshot;
 use warp::Filter;
 
 #[derive(serde::Deserialize, Debug)]
@@ -14,26 +21,43 @@ struct QueryParam {
     param: String,
 }
 
+// 关闭 embedded server 的信号发送端
+static SHUTDOWN_SENDER: OnceCell<Mutex<Option<oneshot::Sender<()>>>> = OnceCell::new();
+
 /// check whether there is already exists
 pub async fn check_singleton() -> Result<()> {
     let port = IVerge::get_singleton_port();
     if !local_port_available(port) {
-        let argvs: Vec<String> = std::env::args().collect();
+        let client = ClientBuilder::new()
+            .timeout(Duration::from_millis(500))
+            .build()?;
+        // 需要确保 Send
+        #[allow(clippy::needless_collect)]
+        let argvs: Vec<std::string::String> = std::env::args().collect();
         if argvs.len() > 1 {
             #[cfg(not(target_os = "macos"))]
             {
                 let param = argvs[1].as_str();
                 if param.starts_with("clash:") {
-                    let _ = reqwest::get(format!(
-                        "http://127.0.0.1:{port}/commands/scheme?param={param}"
-                    ))
-                    .await;
+                    client
+                        .get(format!(
+                            "http://127.0.0.1:{port}/commands/scheme?param={param}"
+                        ))
+                        .send()
+                        .await?;
                 }
             }
         } else {
-            let _ = reqwest::get(format!("http://127.0.0.1:{port}/commands/visible")).await;
+            client
+                .get(format!("http://127.0.0.1:{port}/commands/visible"))
+                .send()
+                .await?;
         }
-        log::error!("failed to setup singleton listen server");
+        logging!(
+            error,
+            Type::Window,
+            "failed to setup singleton listen server"
+        );
         bail!("app exists");
     }
     Ok(())
@@ -42,11 +66,22 @@ pub async fn check_singleton() -> Result<()> {
 /// The embed server only be used to implement singleton process
 /// maybe it can be used as pac server later
 pub fn embed_server() {
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    #[allow(clippy::expect_used)]
+    SHUTDOWN_SENDER
+        .set(Mutex::new(Some(shutdown_tx)))
+        .expect("failed to set shutdown signal for embedded server");
     let port = IVerge::get_singleton_port();
 
     AsyncHandler::spawn(move || async move {
         let visible = warp::path!("commands" / "visible").and_then(|| async {
-            Ok::<_, warp::Rejection>(warp::reply::with_status(
+            logging!(info, Type::Window, "检测到从单例模式恢复应用窗口");
+            if !lightweight::exit_lightweight_mode().await {
+                WindowManager::show_main_window().await;
+            } else {
+                logging!(error, Type::Window, "轻量模式退出失败，无法恢复应用窗口");
+            };
+            Ok::<_, warp::Rejection>(warp::reply::with_status::<std::string::String>(
                 "ok".to_string(),
                 warp::http::StatusCode::OK,
             ))
@@ -55,20 +90,17 @@ pub fn embed_server() {
         let verge_config = Config::verge().await;
         let clash_config = Config::clash().await;
 
-        let content = verge_config
-            .latest_ref()
+        let pac_content = verge_config
+            .latest_arc()
             .pac_file_content
             .clone()
-            .unwrap_or(DEFAULT_PAC.to_string());
+            .unwrap_or_else(|| DEFAULT_PAC.into());
 
-        let mixed_port = verge_config
-            .latest_ref()
+        let pac_port = verge_config
+            .latest_arc()
             .verge_mixed_port
-            .unwrap_or(clash_config.latest_ref().get_mixed_port());
+            .unwrap_or_else(|| clash_config.latest_arc().get_mixed_port());
 
-        // Clone the content and port for the closure to avoid borrowing issues
-        let pac_content = content.clone();
-        let pac_port = mixed_port;
         let pac = warp::path!("commands" / "pac").map(move || {
             let processed_content = pac_content.replace("%mixed-port%", &format!("{pac_port}"));
             warp::http::Response::builder()
@@ -80,16 +112,33 @@ pub fn embed_server() {
         // Use map instead of and_then to avoid Send issues
         let scheme = warp::path!("commands" / "scheme")
             .and(warp::query::<QueryParam>())
-            .map(|query: QueryParam| {
-                // Spawn async work in a fire-and-forget manner
-                let param = query.param.clone();
-                tokio::task::spawn_local(async move {
-                    logging_error!(Type::Setup, true, resolve::resolve_scheme(param).await);
+            .and_then(|query: QueryParam| async move {
+                AsyncHandler::spawn(|| async move {
+                    logging_error!(Type::Setup, resolve::resolve_scheme(&query.param).await);
                 });
-                warp::reply::with_status("ok".to_string(), warp::http::StatusCode::OK)
+                Ok::<_, warp::Rejection>(warp::reply::with_status::<std::string::String>(
+                    "ok".to_string(),
+                    warp::http::StatusCode::OK,
+                ))
             });
 
         let commands = visible.or(scheme).or(pac);
-        warp::serve(commands).run(([127, 0, 0, 1], port)).await;
+        warp::serve(commands)
+            .bind(([127, 0, 0, 1], port))
+            .await
+            .graceful(async {
+                shutdown_rx.await.ok();
+            })
+            .run()
+            .await;
     });
+}
+
+pub fn shutdown_embedded_server() {
+    logging!(info, Type::Window, "shutting down embedded server");
+    if let Some(sender) = SHUTDOWN_SENDER.get()
+        && let Some(sender) = sender.lock().take()
+    {
+        sender.send(()).ok();
+    }
 }

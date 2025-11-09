@@ -1,35 +1,35 @@
-import { useRef, useCallback, memo, useMemo } from "react";
-import { useTranslation } from "react-i18next";
 import {
-  Typography,
+  ArrowDownwardRounded,
+  ArrowUpwardRounded,
+  CloudDownloadRounded,
+  CloudUploadRounded,
+  LinkRounded,
+  MemoryRounded,
+} from "@mui/icons-material";
+import {
+  Grid,
+  PaletteColor,
   Paper,
+  Typography,
   alpha,
   useTheme,
-  PaletteColor,
-  Grid,
-  Box,
 } from "@mui/material";
-import {
-  ArrowUpwardRounded,
-  ArrowDownwardRounded,
-  MemoryRounded,
-  LinkRounded,
-  CloudUploadRounded,
-  CloudDownloadRounded,
-} from "@mui/icons-material";
+import { useRef, memo, useMemo } from "react";
+import { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
+
+import { TrafficErrorBoundary } from "@/components/common/traffic-error-boundary";
+import { useConnectionData } from "@/hooks/use-connection-data";
+import { useMemoryData } from "@/hooks/use-memory-data";
+import { useTrafficData } from "@/hooks/use-traffic-data";
+import { useVerge } from "@/hooks/use-verge";
+import { useVisibility } from "@/hooks/use-visibility";
+import parseTraffic from "@/utils/parse-traffic";
+
 import {
   EnhancedCanvasTrafficGraph,
   type EnhancedCanvasTrafficGraphRef,
 } from "./enhanced-canvas-traffic-graph";
-import { useVisibility } from "@/hooks/use-visibility";
-import { useVerge } from "@/hooks/use-verge";
-import parseTraffic from "@/utils/parse-traffic";
-import { isDebugEnabled, gc } from "@/services/cmds";
-import { ReactNode } from "react";
-import { useAppData } from "@/providers/app-data-provider";
-import { useTrafficDataEnhanced } from "@/hooks/use-traffic-monitor";
-import { TrafficErrorBoundary } from "@/components/common/traffic-error-boundary";
-import useSWR from "swr";
 
 interface StatCardProps {
   icon: ReactNode;
@@ -147,51 +147,33 @@ export const EnhancedTrafficStats = () => {
   const trafficRef = useRef<EnhancedCanvasTrafficGraphRef>(null);
   const pageVisible = useVisibility();
 
-  // 使用AppDataProvider
-  const { connections } = useAppData();
+  const {
+    response: { data: traffic },
+  } = useTrafficData();
 
-  // 使用增强版的统一流量数据Hook
-  const { traffic, memory, isLoading, isDataFresh, hasValidData } =
-    useTrafficDataEnhanced();
+  const {
+    response: { data: memory },
+  } = useMemoryData();
+
+  const {
+    response: { data: connections },
+  } = useConnectionData();
 
   // 是否显示流量图表
   const trafficGraph = verge?.traffic_graph ?? true;
 
-  // 检查是否支持调试
-  // TODO: merge this hook with layout-traffic.tsx
-  const { data: isDebug } = useSWR(
-    `clash-verge-rev-internal://isDebugEnabled`,
-    () => isDebugEnabled(),
-    {
-      // default value before is fetched
-      fallbackData: false,
-    },
-  );
-
   // Canvas组件现在直接从全局Hook获取数据，无需手动添加数据点
-
-  // 执行垃圾回收
-  const handleGarbageCollection = useCallback(async () => {
-    if (isDebug) {
-      try {
-        await gc();
-        console.log("[Debug] 垃圾回收已执行");
-      } catch (err) {
-        console.error("[Debug] 垃圾回收失败:", err);
-      }
-    }
-  }, [isDebug]);
 
   // 使用useMemo计算解析后的流量数据
   const parsedData = useMemo(() => {
-    const [up, upUnit] = parseTraffic(traffic?.raw?.up_rate || 0);
-    const [down, downUnit] = parseTraffic(traffic?.raw?.down_rate || 0);
-    const [inuse, inuseUnit] = parseTraffic(memory?.raw?.inuse || 0);
+    const [up, upUnit] = parseTraffic(traffic?.up || 0);
+    const [down, downUnit] = parseTraffic(traffic?.down || 0);
+    const [inuse, inuseUnit] = parseTraffic(memory?.inuse || 0);
     const [uploadTotal, uploadTotalUnit] = parseTraffic(
-      connections.uploadTotal,
+      connections?.uploadTotal,
     );
     const [downloadTotal, downloadTotalUnit] = parseTraffic(
-      connections.downloadTotal,
+      connections?.downloadTotal,
     );
 
     return {
@@ -205,7 +187,7 @@ export const EnhancedTrafficStats = () => {
       uploadTotalUnit,
       downloadTotal,
       downloadTotalUnit,
-      connectionsCount: connections.count,
+      connectionsCount: connections?.connections.length,
     };
   }, [traffic, memory, connections]);
 
@@ -227,33 +209,10 @@ export const EnhancedTrafficStats = () => {
       >
         <div style={{ height: "100%", position: "relative" }}>
           <EnhancedCanvasTrafficGraph ref={trafficRef} />
-          {isDebug && (
-            <div
-              style={{
-                position: "absolute",
-                top: "2px",
-                left: "2px",
-                zIndex: 10,
-                backgroundColor: "rgba(0,0,0,0.5)",
-                color: "white",
-                fontSize: "8px",
-                padding: "2px 4px",
-                borderRadius: "4px",
-              }}
-            >
-              DEBUG: {trafficRef.current ? "图表已初始化" : "图表未初始化"}
-              <br />
-              状态: {isDataFresh ? "active" : "inactive"}
-              <br />
-              数据新鲜度: {traffic?.is_fresh ? "Fresh" : "Stale"}
-              <br />
-              {new Date().toISOString().slice(11, 19)}
-            </div>
-          )}
         </div>
       </Paper>
     );
-  }, [trafficGraph, pageVisible, theme.palette.divider, isDebug]);
+  }, [trafficGraph, pageVisible, theme.palette.divider]);
 
   // 使用useMemo计算统计卡片配置
   const statCards = useMemo(
@@ -299,10 +258,10 @@ export const EnhancedTrafficStats = () => {
         value: parsedData.inuse,
         unit: parsedData.inuseUnit,
         color: "error" as const,
-        onClick: isDebug ? handleGarbageCollection : undefined,
+        onClick: undefined,
       },
     ],
-    [t, parsedData, isDebug, handleGarbageCollection],
+    [t, parsedData],
   );
 
   return (
@@ -319,28 +278,11 @@ export const EnhancedTrafficStats = () => {
           </Grid>
         )}
         {/* 统计卡片区域 */}
-        {statCards.map((card, index) => (
-          <Grid key={index} size={4}>
-            <CompactStatCard {...card} />
+        {statCards.map((card) => (
+          <Grid key={card.title} size={4}>
+            <CompactStatCard {...(card as StatCardProps)} />
           </Grid>
         ))}
-
-        {/* 数据状态指示器（调试用）*/}
-        {isDebug && (
-          <Grid size={12}>
-            <Box
-              sx={{
-                p: 1,
-                bgcolor: "action.hover",
-                borderRadius: 1,
-                fontSize: "0.75rem",
-              }}
-            >
-              数据状态: {isDataFresh ? "新鲜" : "过期"} | 有效数据:{" "}
-              {hasValidData ? "是" : "否"} | 加载中: {isLoading ? "是" : "否"}
-            </Box>
-          </Grid>
-        )}
       </Grid>
     </TrafficErrorBoundary>
   );

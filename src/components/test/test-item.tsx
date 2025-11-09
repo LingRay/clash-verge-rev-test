@@ -1,18 +1,20 @@
-import { useEffect, useState } from "react";
-import { useLockFn } from "ahooks";
-import { useTranslation } from "react-i18next";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Box, Divider, MenuItem, Menu, styled, alpha } from "@mui/material";
-import { BaseLoading } from "@/components/base";
 import { LanguageRounded } from "@mui/icons-material";
-import { showNotice } from "@/services/noticeService";
-import { TestBox } from "./test-box";
-import delayManager from "@/services/delay";
-import { cmdTestDelay, downloadIconCache } from "@/services/cmds";
-import { UnlistenFn } from "@tauri-apps/api/event";
+import { Box, Divider, MenuItem, Menu, styled, alpha } from "@mui/material";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { UnlistenFn } from "@tauri-apps/api/event";
+import { useLockFn } from "ahooks";
+import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
+
+import { BaseLoading } from "@/components/base";
 import { useListen } from "@/hooks/use-listen";
+import { cmdTestDelay, downloadIconCache } from "@/services/cmds";
+import delayManager from "@/services/delay";
+import { showNotice } from "@/services/noticeService";
+
+import { TestBox } from "./test-box";
 
 interface Props {
   id: string;
@@ -21,8 +23,12 @@ interface Props {
   onDelete: (uid: string) => void;
 }
 
-export const TestItem = (props: Props) => {
-  const { itemData, onEdit, onDelete: onDeleteItem } = props;
+export const TestItem = ({
+  id,
+  itemData,
+  onEdit,
+  onDelete: removeTest,
+}: Props) => {
   const {
     attributes,
     listeners,
@@ -31,7 +37,7 @@ export const TestItem = (props: Props) => {
     transition,
     isDragging,
   } = useSortable({
-    id: props.id,
+    id,
   });
 
   const { t } = useTranslation();
@@ -42,23 +48,25 @@ export const TestItem = (props: Props) => {
   const [iconCachePath, setIconCachePath] = useState("");
   const { addListener } = useListen();
 
-  const onDelay = async () => {
+  const onDelay = useCallback(async () => {
     setDelay(-2);
     const result = await cmdTestDelay(url);
     setDelay(result);
-  };
+  }, [url]);
 
-  useEffect(() => {
-    initIconCachePath();
-  }, [icon]);
-
-  async function initIconCachePath() {
+  const initIconCachePath = useCallback(async () => {
     if (icon && icon.trim().startsWith("http")) {
       const fileName = uid + "-" + getFileName(icon);
       const iconPath = await downloadIconCache(icon, fileName);
       setIconCachePath(convertFileSrc(iconPath));
+    } else {
+      setIconCachePath("");
     }
-  }
+  }, [icon, uid]);
+
+  useEffect(() => {
+    void initIconCachePath();
+  }, [initIconCachePath]);
 
   function getFileName(url: string) {
     return url.substring(url.lastIndexOf("/") + 1);
@@ -72,7 +80,7 @@ export const TestItem = (props: Props) => {
   const onDelete = useLockFn(async () => {
     setAnchorEl(null);
     try {
-      onDeleteItem(uid);
+      removeTest(uid);
     } catch (err: any) {
       showNotice("error", err.message || err.toString());
     }
@@ -100,12 +108,12 @@ export const TestItem = (props: Props) => {
     return () => {
       if (unlistenFn) {
         console.log(
-          `TestItem for ${props.id} unmounting or url changed, cleaning up test-all listener.`,
+          `TestItem for ${id} unmounting or url changed, cleaning up test-all listener.`,
         );
         unlistenFn();
       }
     };
-  }, [url, addListener, onDelay, props.id]);
+  }, [url, addListener, onDelay, id]);
 
   return (
     <Box

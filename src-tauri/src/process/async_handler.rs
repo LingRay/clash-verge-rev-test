@@ -8,9 +8,9 @@ use tauri::{async_runtime, async_runtime::JoinHandle};
 pub struct AsyncHandler;
 
 impl AsyncHandler {
-    pub fn handle() -> async_runtime::RuntimeHandle {
-        async_runtime::handle()
-    }
+    // pub fn handle() -> async_runtime::RuntimeHandle {
+    //     async_runtime::handle()
+    // }
 
     #[track_caller]
     pub fn spawn<F, Fut>(f: F) -> JoinHandle<()>
@@ -67,12 +67,18 @@ impl AsyncHandler {
             location.column()
         );
 
-        println!("┌────────────────────┬─────────────────────────────────────────────────────────────────────────────┐");
+        println!(
+            "┌────────────────────┬─────────────────────────────────────────────────────────────────────────────┐"
+        );
         println!("│ {:<18} │ {:<80} │", "Field", "Value");
-        println!("├────────────────────┼─────────────────────────────────────────────────────────────────────────────┤");
+        println!(
+            "├────────────────────┼─────────────────────────────────────────────────────────────────────────────┤"
+        );
         println!("│ {:<18} │ {:<80} │", "Type of task", type_str);
         println!("│ {:<18} │ {:<80} │", "Size of task", size_str);
         println!("│ {:<18} │ {:<80} │", "Called from", loc_str);
-        println!("└────────────────────┴─────────────────────────────────────────────────────────────────────────────┘");
+        println!(
+            "└────────────────────┴─────────────────────────────────────────────────────────────────────────────┘"
+        );
     }
 }

@@ -1,11 +1,13 @@
+import { styled, Typography } from "@mui/material";
+import { useLockFn } from "ahooks";
 import { forwardRef, useImperativeHandle, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useLockFn } from "ahooks";
-import { styled, Typography } from "@mui/material";
-import { useVerge } from "@/hooks/use-verge";
+
 import { BaseDialog, DialogRef, Switch } from "@/components/base";
-import { HotkeyInput } from "./hotkey-input";
+import { useVerge } from "@/hooks/use-verge";
 import { showNotice } from "@/services/noticeService";
+
+import { HotkeyInput } from "./hotkey-input";
 
 const ItemWrapper = styled("div")`
   display: flex;
@@ -31,7 +33,7 @@ export const HotkeyViewer = forwardRef<DialogRef>((props, ref) => {
   const { verge, patchVerge } = useVerge();
 
   const [hotkeyMap, setHotkeyMap] = useState<Record<string, string[]>>({});
-  const [enableGlobalHotkey, setEnableHotkey] = useState(
+  const [enableGlobalHotkey, setEnableGlobalHotkey] = useState(
     verge?.enable_global_hotkey ?? true,
   );
 
@@ -80,7 +82,7 @@ export const HotkeyViewer = forwardRef<DialogRef>((props, ref) => {
       });
       setOpen(false);
     } catch (err: any) {
-      showNotice("error", err.toString());
+      showNotice("error", err.message || err.toString());
     }
   });
 
@@ -100,7 +102,7 @@ export const HotkeyViewer = forwardRef<DialogRef>((props, ref) => {
         <Switch
           edge="end"
           checked={enableGlobalHotkey}
-          onChange={(e) => setEnableHotkey(e.target.checked)}
+          onChange={(e) => setEnableGlobalHotkey(e.target.checked)}
         />
       </ItemWrapper>
 

@@ -1,23 +1,25 @@
-import {
-  forwardRef,
-  useImperativeHandle,
-  useState,
-  useEffect,
-  useCallback,
-  useMemo,
-  useRef,
-  memo,
-} from "react";
 import { Box, useTheme } from "@mui/material";
+import type { Ref } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
-import parseTraffic from "@/utils/parse-traffic";
+
 import {
   useTrafficGraphDataEnhanced,
   type ITrafficDataPoint,
 } from "@/hooks/use-traffic-monitor";
+import parseTraffic from "@/utils/parse-traffic";
 
 // 流量数据项接口
-export interface ITrafficItem {
+interface ITrafficItem {
   up: number;
   down: number;
   timestamp?: number;
@@ -43,7 +45,6 @@ interface TooltipData {
   highlightY: number; // 高亮Y轴位置
 }
 
-// Canvas图表配置
 const MAX_POINTS = 300;
 const TARGET_FPS = 15; // 降低帧率减少闪烁
 const LINE_WIDTH_UP = 2.5;
@@ -76,17 +77,28 @@ const GRAPH_CONFIG = {
   },
 };
 
+interface EnhancedCanvasTrafficGraphProps {
+  ref?: Ref<EnhancedCanvasTrafficGraphRef>;
+}
+
+const displayDataReducer = (
+  _: ITrafficDataPoint[],
+  payload: ITrafficDataPoint[],
+): ITrafficDataPoint[] => payload;
+
 /**
  * 稳定版Canvas流量图表组件
  * 修复闪烁问题，添加时间轴显示
  */
 export const EnhancedCanvasTrafficGraph = memo(
-  forwardRef<EnhancedCanvasTrafficGraphRef>((props, ref) => {
+  function EnhancedCanvasTrafficGraph({
+    ref,
+  }: EnhancedCanvasTrafficGraphProps) {
     const theme = useTheme();
     const { t } = useTranslation();
 
     // 使用增强版全局流量数据管理
-    const { dataPoints, getDataForTimeRange, isDataFresh, samplerStats } =
+    const { dataPoints, getDataForTimeRange, samplerStats } =
       useTrafficGraphDataEnhanced();
 
     // 基础状态
@@ -112,7 +124,11 @@ export const EnhancedCanvasTrafficGraph = memo(
     const isInitializedRef = useRef<boolean>(false);
 
     // 当前显示的数据缓存
-    const [displayData, setDisplayData] = useState<ITrafficDataPoint[]>([]);
+    const [displayData, dispatchDisplayData] = useReducer(
+      displayDataReducer,
+      [],
+    );
+    const debounceTimeoutRef = useRef<number | null>(null);
 
     // 主题颜色配置
     const colors = useMemo(
@@ -127,26 +143,27 @@ export const EnhancedCanvasTrafficGraph = memo(
     );
 
     // 更新显示数据（防抖处理）
-    const updateDisplayDataDebounced = useMemo(() => {
-      let timeoutId: number;
-      return (newData: ITrafficDataPoint[]) => {
-        clearTimeout(timeoutId);
-        timeoutId = window.setTimeout(() => {
-          setDisplayData(newData);
-        }, 50); // 50ms防抖
-      };
+    const updateDisplayData = useCallback((newData: ITrafficDataPoint[]) => {
+      if (debounceTimeoutRef.current !== null) {
+        window.clearTimeout(debounceTimeoutRef.current);
+      }
+      debounceTimeoutRef.current = window.setTimeout(() => {
+        dispatchDisplayData(newData);
+      }, 50); // 50ms防抖
     }, []);
 
     // 监听数据变化
     useEffect(() => {
       const timeRangeData = getDataForTimeRange(timeRange);
-      updateDisplayDataDebounced(timeRangeData);
-    }, [
-      dataPoints,
-      timeRange,
-      getDataForTimeRange,
-      updateDisplayDataDebounced,
-    ]);
+      updateDisplayData(timeRangeData);
+
+      return () => {
+        if (debounceTimeoutRef.current !== null) {
+          window.clearTimeout(debounceTimeoutRef.current);
+          debounceTimeoutRef.current = null;
+        }
+      };
+    }, [dataPoints, timeRange, getDataForTimeRange, updateDisplayData]);
 
     // Y轴坐标计算 - 基于刻度范围的线性映射
     const calculateY = useCallback(
@@ -859,6 +876,7 @@ export const EnhancedCanvasTrafficGraph = memo(
           }}
           onMouseMove={handleMouseMove}
           onMouseLeave={handleMouseLeave}
+          onClick={toggleStyle}
         />
 
         {/* 控制层覆盖 */}
@@ -956,8 +974,8 @@ export const EnhancedCanvasTrafficGraph = memo(
               lineHeight: 1.2,
             }}
           >
-            Points: {displayData.length} | Fresh: {isDataFresh ? "✓" : "✗"} |
-            Compressed: {samplerStats.compressedBufferSize}
+            Points: {displayData.length} | Compressed:{" "}
+            {samplerStats.compressedBufferSize}
           </Box>
 
           {/* 悬浮提示框 */}
@@ -982,6 +1000,7 @@ export const EnhancedCanvasTrafficGraph = memo(
                 boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
                 backdropFilter: "none",
                 opacity: 1,
+                whiteSpace: "nowrap",
               }}
             >
               <Box color="text.secondary" mb={0.2}>
@@ -998,7 +1017,7 @@ export const EnhancedCanvasTrafficGraph = memo(
         </Box>
       </Box>
     );
-  }),
+  },
 );
 
 EnhancedCanvasTrafficGraph.displayName = "EnhancedCanvasTrafficGraph";

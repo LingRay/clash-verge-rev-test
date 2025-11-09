@@ -1,33 +1,35 @@
-import { useTranslation } from "react-i18next";
-import {
-  Box,
-  Typography,
-  Button,
-  Stack,
-  LinearProgress,
-  alpha,
-  useTheme,
-  Link,
-  keyframes,
-} from "@mui/material";
-import { useNavigate } from "react-router-dom";
 import {
   CloudUploadOutlined,
-  StorageOutlined,
-  UpdateOutlined,
   DnsOutlined,
-  SpeedOutlined,
   EventOutlined,
   LaunchOutlined,
+  SpeedOutlined,
+  StorageOutlined,
+  UpdateOutlined,
 } from "@mui/icons-material";
-import dayjs from "dayjs";
-import parseTraffic from "@/utils/parse-traffic";
-import { useMemo, useCallback, useState } from "react";
-import { openWebUrl, updateProfile } from "@/services/cmds";
+import {
+  Box,
+  Button,
+  LinearProgress,
+  Link,
+  Stack,
+  Typography,
+  alpha,
+  keyframes,
+  useTheme,
+} from "@mui/material";
 import { useLockFn } from "ahooks";
+import dayjs from "dayjs";
+import { useCallback, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router";
+
+import { useAppData } from "@/providers/app-data-context";
+import { openWebUrl, updateProfile } from "@/services/cmds";
 import { showNotice } from "@/services/noticeService";
+import parseTraffic from "@/utils/parse-traffic";
+
 import { EnhancedCard } from "./enhanced-card";
-import { useAppData } from "@/providers/app-data-provider";
 
 // 定义旋转动画
 const round = keyframes`
@@ -55,7 +57,7 @@ interface ProfileExtra {
   expire: number;
 }
 
-export interface ProfileItem {
+interface ProfileItem {
   uid: string;
   type?: "local" | "remote" | "merge" | "script";
   name?: string;
@@ -68,7 +70,7 @@ export interface ProfileItem {
   option?: any;
 }
 
-export interface HomeProfileCardProps {
+interface HomeProfileCardProps {
   current: ProfileItem | null | undefined;
   onProfileUpdated?: () => void;
 }
@@ -290,7 +292,6 @@ export const HomeProfileCard = ({
     setUpdating(true);
     try {
       await updateProfile(current.uid, current.option);
-      showNotice("success", t("Update subscription successfully"), 1000);
       onProfileUpdated?.();
 
       // 刷新首页数据

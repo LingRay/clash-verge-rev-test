@@ -1,8 +1,9 @@
 import useSWR, { mutate } from "swr";
+import { closeAllConnections } from "tauri-plugin-mihomo-api";
+
 import { useVerge } from "@/hooks/use-verge";
+import { useAppData } from "@/providers/app-data-context";
 import { getAutotemProxy } from "@/services/cmds";
-import { useAppData } from "@/providers/app-data-provider";
-import { closeAllConnections } from "@/services/cmds";
 
 // 系统代理状态检测统一逻辑
 export const useSystemProxyState = () => {

@@ -1,5 +1,3 @@
-import { useEffect, useState } from "react";
-import { useTranslation } from "react-i18next";
 import {
   Button,
   Dialog,
@@ -8,6 +6,8 @@ import {
   DialogTitle,
   TextField,
 } from "@mui/material";
+import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 interface Props {
   onConfirm: (passwd: string) => Promise<void>;
@@ -18,10 +18,6 @@ export const PasswordInput = (props: Props) => {
 
   const { t } = useTranslation();
   const [passwd, setPasswd] = useState("");
-
-  useEffect(() => {
-    if (!open) return;
-  }, [open]);
 
   return (
     <Dialog open={true} maxWidth="xs" fullWidth>

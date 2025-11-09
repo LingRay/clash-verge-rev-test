@@ -1,16 +1,17 @@
-import { useTranslation } from "react-i18next";
-import { Box, Typography, Paper, Stack } from "@mui/material";
-import { useLockFn } from "ahooks";
-import { closeAllConnections } from "@/services/cmds";
-import { patchClashMode } from "@/services/cmds";
-import { useVerge } from "@/hooks/use-verge";
 import {
+  DirectionsRounded,
   LanguageRounded,
   MultipleStopRounded,
-  DirectionsRounded,
 } from "@mui/icons-material";
+import { Box, Paper, Stack, Typography } from "@mui/material";
+import { useLockFn } from "ahooks";
 import { useMemo } from "react";
-import { useAppData } from "@/providers/app-data-provider";
+import { useTranslation } from "react-i18next";
+import { closeAllConnections } from "tauri-plugin-mihomo-api";
+
+import { useVerge } from "@/hooks/use-verge";
+import { useAppData } from "@/providers/app-data-context";
+import { patchClashMode } from "@/services/cmds";
 
 export const ClashModeCard = () => {
   const { t } = useTranslation();
@@ -30,7 +31,7 @@ export const ClashModeCard = () => {
       );
     }
     return t("Core communication error");
-  }, [currentMode]);
+  }, [currentMode, t]);
 
   // 模式图标映射
   const modeIcons = useMemo(

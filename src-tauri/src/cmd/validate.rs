@@ -1,10 +1,15 @@
 use super::CmdResult;
-use crate::{core::*, logging, utils::logging::Type};
+use crate::{
+    core::{validate::CoreConfigValidator, *},
+    logging,
+    utils::logging::Type,
+};
+use smartstring::alias::String;
 
 /// 发送脚本验证通知消息
 #[tauri::command]
 pub async fn script_validate_notice(status: String, msg: String) -> CmdResult {
-    handle::Handle::notice_message(&status, &msg);
+    handle::Handle::notice_message(status.as_str(), msg.as_str());
     Ok(())
 }
 
@@ -28,27 +33,17 @@ pub fn handle_script_validation_notice(result: &(bool, String), file_type: &str)
             "config_validate::script_error"
         };
 
-        logging!(
-            warn,
-            Type::Config,
-            true,
-            "{} 验证失败: {}",
-            file_type,
-            error_msg
-        );
-        handle::Handle::notice_message(status, error_msg);
+        logging!(warn, Type::Config, "{} 验证失败: {}", file_type, error_msg);
+        handle::Handle::notice_message(status, error_msg.to_owned());
     }
 }
 
 /// 验证指定脚本文件
 #[tauri::command]
 pub async fn validate_script_file(file_path: String) -> CmdResult<bool> {
-    logging!(info, Type::Config, true, "验证脚本文件: {}", file_path);
+    logging!(info, Type::Config, "验证脚本文件: {}", file_path);
 
-    match CoreManager::global()
-        .validate_config_file(&file_path, None)
-        .await
-    {
+    match CoreConfigValidator::validate_config_file(&file_path, None).await {
         Ok(result) => {
             handle_script_validation_notice(&result, "脚本文件");
             Ok(result.0) // 返回验证结果布尔值
@@ -58,7 +53,6 @@ pub async fn validate_script_file(file_path: String) -> CmdResult<bool> {
             logging!(
                 error,
                 Type::Config,
-                true,
                 "验证脚本文件过程发生错误: {}",
                 error_msg
             );
@@ -76,7 +70,6 @@ pub fn handle_yaml_validation_notice(result: &(bool, String), file_type: &str) {
         logging!(
             info,
             Type::Config,
-            true,
             "[通知] 处理{}验证错误: {}",
             file_type,
             error_msg
@@ -117,22 +110,14 @@ pub fn handle_yaml_validation_notice(result: &(bool, String), file_type: &str) {
             }
         };
 
-        logging!(
-            warn,
-            Type::Config,
-            true,
-            "{} 验证失败: {}",
-            file_type,
-            error_msg
-        );
+        logging!(warn, Type::Config, "{} 验证失败: {}", file_type, error_msg);
         logging!(
             info,
             Type::Config,
-            true,
             "[通知] 发送通知: status={}, msg={}",
             status,
             error_msg
         );
-        handle::Handle::notice_message(status, error_msg);
+        handle::Handle::notice_message(status, error_msg.to_owned());
     }
 }

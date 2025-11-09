@@ -1,29 +1,31 @@
+import { ContentCopyRounded } from "@mui/icons-material";
+import { Typography } from "@mui/material";
 import { useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { Typography } from "@mui/material";
+
+import { DialogRef } from "@/components/base";
+import { TooltipIcon } from "@/components/base/base-tooltip-icon";
 import {
   exitApp,
+  exportDiagnosticInfo,
   openAppDir,
   openCoreDir,
-  openLogsDir,
   openDevTools,
-  exportDiagnosticInfo,
+  openLogsDir,
 } from "@/services/cmds";
-import { check as checkUpdate } from "@tauri-apps/plugin-updater";
+import { showNotice } from "@/services/noticeService";
+import { checkUpdateSafe as checkUpdate } from "@/services/update";
 import { version } from "@root/package.json";
-import { DialogRef } from "@/components/base";
-import { SettingList, SettingItem } from "./mods/setting-comp";
+
+import { BackupViewer } from "./mods/backup-viewer";
 import { ConfigViewer } from "./mods/config-viewer";
 import { HotkeyViewer } from "./mods/hotkey-viewer";
-import { MiscViewer } from "./mods/misc-viewer";
-import { ThemeViewer } from "./mods/theme-viewer";
 import { LayoutViewer } from "./mods/layout-viewer";
-import { UpdateViewer } from "./mods/update-viewer";
-import { BackupViewer } from "./mods/backup-viewer";
 import { LiteModeViewer } from "./mods/lite-mode-viewer";
-import { TooltipIcon } from "@/components/base/base-tooltip-icon";
-import { ContentCopyRounded } from "@mui/icons-material";
-import { showNotice } from "@/services/noticeService";
+import { MiscViewer } from "./mods/misc-viewer";
+import { SettingItem, SettingList } from "./mods/setting-comp";
+import { ThemeViewer } from "./mods/theme-viewer";
+import { UpdateViewer } from "./mods/update-viewer";
 
 interface Props {
   onError?: (err: Error) => void;
@@ -57,13 +59,13 @@ const SettingVergeAdvanced = ({ onError: _ }: Props) => {
   const onExportDiagnosticInfo = useCallback(async () => {
     await exportDiagnosticInfo();
     showNotice("success", t("Copy Success"), 1000);
-  }, []);
+  }, [t]);
 
   const copyVersion = useCallback(() => {
     navigator.clipboard.writeText(`v${version}`).then(() => {
       showNotice("success", t("Version copied to clipboard"), 1000);
     });
-  }, [version, t]);
+  }, [t]);
 
   return (
     <SettingList title={t("Verge Advanced Setting")}>

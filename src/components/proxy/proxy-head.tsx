@@ -1,6 +1,3 @@
-import { useEffect, useState } from "react";
-import { useTranslation } from "react-i18next";
-import { Box, IconButton, TextField, SxProps } from "@mui/material";
 import {
   AccessTimeRounded,
   MyLocationRounded,
@@ -14,10 +11,15 @@ import {
   SortByAlphaRounded,
   SortRounded,
 } from "@mui/icons-material";
+import { Box, IconButton, TextField, SxProps } from "@mui/material";
+import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
+
 import { useVerge } from "@/hooks/use-verge";
-import type { HeadState } from "./use-head-state";
-import type { ProxySortType } from "./use-filter-sort";
 import delayManager from "@/services/delay";
+
+import type { ProxySortType } from "./use-filter-sort";
+import type { HeadState } from "./use-head-state";
 
 interface Props {
   sx?: SxProps;
@@ -29,9 +31,17 @@ interface Props {
   onHeadState: (val: Partial<HeadState>) => void;
 }
 
-export const ProxyHead = (props: Props) => {
-  const { sx = {}, url, groupName, headState, onHeadState } = props;
+const defaultSx: SxProps = {};
 
+export const ProxyHead = ({
+  sx = defaultSx,
+  url,
+  groupName,
+  headState,
+  onHeadState,
+  onLocation,
+  onCheckDelay,
+}: Props) => {
   const { showType, sortType, filterText, textState, testUrl } = headState;
 
   const { t } = useTranslation();
@@ -44,13 +54,13 @@ export const ProxyHead = (props: Props) => {
   }, []);
 
   const { verge } = useVerge();
+  const defaultLatencyUrl =
+    verge?.default_latency_test?.trim() ||
+    "https://cp.cloudflare.com/generate_204";
 
   useEffect(() => {
-    delayManager.setUrl(
-      groupName,
-      testUrl || url || verge?.default_latency_test!,
-    );
-  }, [groupName, testUrl, verge?.default_latency_test]);
+    delayManager.setUrl(groupName, testUrl?.trim() || url || defaultLatencyUrl);
+  }, [groupName, testUrl, defaultLatencyUrl, url]);
 
   return (
     <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, ...sx }}>
@@ -58,7 +68,7 @@ export const ProxyHead = (props: Props) => {
         size="small"
         color="inherit"
         title={t("locate")}
-        onClick={props.onLocation}
+        onClick={onLocation}
       >
         <MyLocationRounded />
       </IconButton>
@@ -74,7 +84,7 @@ export const ProxyHead = (props: Props) => {
             console.log(`[ProxyHead] 使用自定义测试URL: ${testUrl}`);
             onHeadState({ textState: "url" });
           }
-          props.onCheckDelay();
+          onCheckDelay();
         }}
       >
         <NetworkCheckRounded />

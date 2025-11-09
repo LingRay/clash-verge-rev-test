@@ -1,15 +1,24 @@
-import { forwardRef, useImperativeHandle, useState } from "react";
+import { Box, Button, Typography } from "@mui/material";
 import { useLockFn } from "ahooks";
+import type { Ref } from "react";
+import { useImperativeHandle, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Button, Box, Typography } from "@mui/material";
-import { useVerge } from "@/hooks/use-verge";
-import { openWebUrl } from "@/services/cmds";
+
 import { BaseDialog, BaseEmpty, DialogRef } from "@/components/base";
 import { useClashInfo } from "@/hooks/use-clash";
-import { WebUIItem } from "./web-ui-item";
+import { useVerge } from "@/hooks/use-verge";
+import { openWebUrl } from "@/services/cmds";
 import { showNotice } from "@/services/noticeService";
 
-export const WebUIViewer = forwardRef<DialogRef>((props, ref) => {
+import { WebUIItem } from "./web-ui-item";
+
+const DEFAULT_WEB_UI_LIST = [
+  "https://metacubex.github.io/metacubexd/#/setup?http=true&hostname=%host&port=%port&secret=%secret",
+  "https://yacd.metacubex.one/?hostname=%host&port=%port&secret=%secret",
+  "https://board.zash.run.place/#/setup?http=true&hostname=%host&port=%port&secret=%secret",
+];
+
+export function WebUIViewer({ ref }: { ref?: Ref<DialogRef> }) {
   const { t } = useTranslation();
 
   const { clashInfo } = useClashInfo();
@@ -23,11 +32,21 @@ export const WebUIViewer = forwardRef<DialogRef>((props, ref) => {
     close: () => setOpen(false),
   }));
 
-  const webUIList = verge?.web_ui_list || [
-    "https://metacubex.github.io/metacubexd/#/setup?http=true&hostname=%host&port=%port&secret=%secret",
-    "https://yacd.metacubex.one/?hostname=%host&port=%port&secret=%secret",
-    "https://board.zash.run.place/#/setup?http=true&hostname=%host&port=%port&secret=%secret",
-  ];
+  const webUIList = verge?.web_ui_list || DEFAULT_WEB_UI_LIST;
+
+  const webUIEntries = useMemo(() => {
+    const counts: Record<string, number> = {};
+    return webUIList.map((item, index) => {
+      const keyBase = item && item.trim().length > 0 ? item : "entry";
+      const count = counts[keyBase] ?? 0;
+      counts[keyBase] = count + 1;
+      return {
+        item,
+        index,
+        key: `${keyBase}-${count}`,
+      };
+    });
+  }, [webUIList]);
 
   const handleAdd = useLockFn(async (value: string) => {
     const newList = [...webUIList, value];
@@ -115,9 +134,9 @@ export const WebUIViewer = forwardRef<DialogRef>((props, ref) => {
         />
       )}
 
-      {webUIList.map((item, index) => (
+      {webUIEntries.map(({ item, index, key }) => (
         <WebUIItem
-          key={index}
+          key={key}
           value={item}
           onChange={(v) => handleChange(index, v)}
           onDelete={() => handleDelete(index)}
@@ -137,4 +156,4 @@ export const WebUIViewer = forwardRef<DialogRef>((props, ref) => {
       )}
     </BaseDialog>
   );
-});
+}

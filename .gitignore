@@ -10,3 +10,5 @@ scripts/_env.sh
 .tool-versions
 .idea
 .old
+.eslintcache
+target

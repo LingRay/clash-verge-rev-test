@@ -1,11 +1,12 @@
-import { BaseDialog, Switch } from "@/components/base";
-import { useClash } from "@/hooks/use-clash";
-import { showNotice } from "@/services/noticeService";
 import { Delete as DeleteIcon } from "@mui/icons-material";
 import { Box, Button, Divider, List, ListItem, TextField } from "@mui/material";
 import { useLockFn, useRequest } from "ahooks";
-import { forwardRef, useImperativeHandle, useState } from "react";
+import { forwardRef, useImperativeHandle, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+
+import { BaseDialog, Switch } from "@/components/base";
+import { useClash } from "@/hooks/use-clash";
+import { showNotice } from "@/services/noticeService";
 
 // 定义开发环境的URL列表
 // 这些URL在开发模式下会被自动包含在允许的来源中
@@ -164,6 +165,19 @@ export const HeaderConfiguration = forwardRef<ClashHeaderConfigingRef>(
       await saveConfig();
     });
 
+    const originEntries = useMemo(() => {
+      const counts: Record<string, number> = {};
+      return corsConfig.allowOrigins.map((origin, index) => {
+        const occurrence = (counts[origin] = (counts[origin] ?? 0) + 1);
+        const keyBase = origin || "origin";
+        return {
+          origin,
+          index,
+          key: `${keyBase}-${occurrence}`,
+        };
+      });
+    }, [corsConfig.allowOrigins]);
+
     return (
       <BaseDialog
         open={open}
@@ -206,9 +220,9 @@ export const HeaderConfiguration = forwardRef<ClashHeaderConfigingRef>(
               <div style={{ marginBottom: 8, fontWeight: "bold" }}>
                 {t("Allowed Origins")}
               </div>
-              {corsConfig.allowOrigins.map((origin, index) => (
+              {originEntries.map(({ origin, index, key }) => (
                 <div
-                  key={index}
+                  key={key}
                   style={{
                     display: "flex",
                     alignItems: "center",

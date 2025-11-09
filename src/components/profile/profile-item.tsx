@@ -1,10 +1,11 @@
-import dayjs from "dayjs";
-import { mutate } from "swr";
-import { useEffect, useState } from "react";
-import { useLockFn } from "ahooks";
-import { useTranslation } from "react-i18next";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import {
+  RefreshRounded,
+  DragIndicatorRounded,
+  CheckBoxRounded,
+  CheckBoxOutlineBlankRounded,
+} from "@mui/icons-material";
 import {
   Box,
   Typography,
@@ -15,8 +16,17 @@ import {
   Menu,
   CircularProgress,
 } from "@mui/material";
-import { RefreshRounded, DragIndicatorRounded } from "@mui/icons-material";
-import { useLoadingCache, useSetLoadingCache } from "@/services/states";
+import { open } from "@tauri-apps/plugin-shell";
+import { useLockFn } from "ahooks";
+import dayjs from "dayjs";
+import { useEffect, useReducer, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { mutate } from "swr";
+
+import { ConfirmViewer } from "@/components/profile/confirm-viewer";
+import { EditorViewer } from "@/components/profile/editor-viewer";
+import { GroupsEditorViewer } from "@/components/profile/groups-editor-viewer";
+import { RulesEditorViewer } from "@/components/profile/rules-editor-viewer";
 import {
   viewProfile,
   readProfileFile,
@@ -25,13 +35,10 @@ import {
   getNextUpdateTime,
 } from "@/services/cmds";
 import { showNotice } from "@/services/noticeService";
-import { GroupsEditorViewer } from "@/components/profile/groups-editor-viewer";
-import { RulesEditorViewer } from "@/components/profile/rules-editor-viewer";
-import { EditorViewer } from "@/components/profile/editor-viewer";
-import { ProfileBox } from "./profile-box";
+import { useLoadingCache, useSetLoadingCache } from "@/services/states";
 import parseTraffic from "@/utils/parse-traffic";
-import { ConfirmViewer } from "@/components/profile/confirm-viewer";
-import { open } from "@tauri-apps/plugin-shell";
+
+import { ProfileBox } from "./profile-box";
 import { ProxiesEditorViewer } from "./proxies-editor-viewer";
 const round = keyframes`
   from { transform: rotate(0deg); }
@@ -47,11 +54,25 @@ interface Props {
   onEdit: () => void;
   onSave?: (prev?: string, curr?: string) => void;
   onDelete: () => void;
+  batchMode?: boolean;
+  isSelected?: boolean;
+  onSelectionChange?: () => void;
 }
 
 export const ProfileItem = (props: Props) => {
-  const { selected, activating, itemData, onSelect, onEdit, onSave, onDelete } =
-    props;
+  const {
+    id,
+    selected,
+    activating,
+    itemData,
+    onSelect,
+    onEdit,
+    onSave,
+    onDelete,
+    batchMode,
+    isSelected,
+    onSelectionChange,
+  } = props;
   const {
     attributes,
     listeners,
@@ -60,11 +81,11 @@ export const ProfileItem = (props: Props) => {
     transition,
     isDragging,
   } = useSortable({
-    id: props.id,
+    id,
   });
 
   const { t } = useTranslation();
-  const [anchorEl, setAnchorEl] = useState<any>(null);
+  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const [position, setPosition] = useState({ left: 0, top: 0 });
   const loadingCache = useLoadingCache();
   const setLoadingCache = useSetLoadingCache();
@@ -146,37 +167,44 @@ export const ProfileItem = (props: Props) => {
     if (showNextUpdate) {
       fetchNextUpdateTime();
     }
-  }, [showNextUpdate, itemData.option?.update_interval, updated]);
+  }, [
+    fetchNextUpdateTime,
+    showNextUpdate,
+    itemData.option?.update_interval,
+    updated,
+  ]);
 
   // 订阅定时器更新事件
   useEffect(() => {
+    let refreshTimeout: number | undefined;
     // 处理定时器更新事件 - 这个事件专门用于通知定时器变更
-    const handleTimerUpdate = (event: any) => {
-      const updatedUid = event.payload as string;
+    const handleTimerUpdate = (event: Event) => {
+      const source = event as CustomEvent<string> & { payload?: string };
+      const updatedUid = source.detail ?? source.payload;
 
       // 只有当更新的是当前配置时才刷新显示
       if (updatedUid === itemData.uid && showNextUpdate) {
         console.log(`收到定时器更新事件: uid=${updatedUid}`);
-        setTimeout(() => {
+        if (refreshTimeout !== undefined) {
+          clearTimeout(refreshTimeout);
+        }
+        refreshTimeout = window.setTimeout(() => {
           fetchNextUpdateTime(true);
         }, 1000);
       }
     };
 
     // 只注册定时器更新事件监听
-    window.addEventListener(
-      "verge://timer-updated",
-      handleTimerUpdate as EventListener,
-    );
+    window.addEventListener("verge://timer-updated", handleTimerUpdate);
 
     return () => {
+      if (refreshTimeout !== undefined) {
+        clearTimeout(refreshTimeout);
+      }
       // 清理事件监听
-      window.removeEventListener(
-        "verge://timer-updated",
-        handleTimerUpdate as EventListener,
-      );
+      window.removeEventListener("verge://timer-updated", handleTimerUpdate);
     };
-  }, [showNextUpdate, itemData.uid]);
+  }, [fetchNextUpdateTime, itemData.uid, showNextUpdate]);
 
   // local file mode
   // remote file mode
@@ -197,11 +225,11 @@ export const ProfileItem = (props: Props) => {
   const loading = loadingCache[itemData.uid] ?? false;
 
   // interval update fromNow field
-  const [, setRefresh] = useState({});
+  const [, forceRefresh] = useReducer((value: number) => value + 1, 0);
   useEffect(() => {
     if (!hasUrl) return;
 
-    let timer: any = null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
     const handler = () => {
       const now = Date.now();
@@ -212,7 +240,7 @@ export const ProfileItem = (props: Props) => {
       const wait = now - lastUpdate >= 36e5 ? 30e5 : 5e4;
 
       timer = setTimeout(() => {
-        setRefresh({});
+        forceRefresh();
         handler();
       }, wait);
     };
@@ -220,9 +248,12 @@ export const ProfileItem = (props: Props) => {
     handler();
 
     return () => {
-      if (timer) clearTimeout(timer);
+      if (timer) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
     };
-  }, [hasUrl, updated]);
+  }, [forceRefresh, hasUrl, updated]);
 
   const [fileOpen, setFileOpen] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
@@ -310,10 +341,10 @@ export const ProfileItem = (props: Props) => {
 
     try {
       // 调用后端更新（后端会自动处理回退逻辑）
-      await updateProfile(itemData.uid, option);
+      const payload = Object.keys(option).length > 0 ? option : undefined;
+      await updateProfile(itemData.uid, payload);
 
       // 更新成功，刷新列表
-      showNotice("success", t("Update subscription successfully"));
       mutate("getProfiles");
     } catch {
       // 更新完全失败（包括后端的回退尝试）
@@ -361,7 +392,14 @@ export const ProfileItem = (props: Props) => {
       label: "Delete",
       handler: () => {
         setAnchorEl(null);
-        setConfirmOpen(true);
+        if (batchMode) {
+          // If in batch mode, just toggle selection instead of showing delete confirmation
+          if (onSelectionChange) {
+            onSelectionChange();
+          }
+        } else {
+          setConfirmOpen(true);
+        }
       },
       disabled: false,
     },
@@ -400,7 +438,14 @@ export const ProfileItem = (props: Props) => {
       label: "Delete",
       handler: () => {
         setAnchorEl(null);
-        setConfirmOpen(true);
+        if (batchMode) {
+          // If in batch mode, just toggle selection instead of showing delete confirmation
+          if (onSelectionChange) {
+            onSelectionChange();
+          }
+        } else {
+          setConfirmOpen(true);
+        }
       },
       disabled: false,
     },
@@ -415,14 +460,16 @@ export const ProfileItem = (props: Props) => {
 
   // 监听自动更新事件
   useEffect(() => {
-    const handleUpdateStarted = (event: CustomEvent) => {
-      if (event.detail.uid === itemData.uid) {
+    const handleUpdateStarted = (event: Event) => {
+      const customEvent = event as CustomEvent<{ uid?: string }>;
+      if (customEvent.detail?.uid === itemData.uid) {
         setLoadingCache((cache) => ({ ...cache, [itemData.uid]: true }));
       }
     };
 
-    const handleUpdateCompleted = (event: CustomEvent) => {
-      if (event.detail.uid === itemData.uid) {
+    const handleUpdateCompleted = (event: Event) => {
+      const customEvent = event as CustomEvent<{ uid?: string }>;
+      if (customEvent.detail?.uid === itemData.uid) {
         setLoadingCache((cache) => ({ ...cache, [itemData.uid]: false }));
         // 更新完成后刷新显示
         if (showNextUpdate) {
@@ -432,27 +479,18 @@ export const ProfileItem = (props: Props) => {
     };
 
     // 注册事件监听
-    window.addEventListener(
-      "profile-update-started",
-      handleUpdateStarted as EventListener,
-    );
-    window.addEventListener(
-      "profile-update-completed",
-      handleUpdateCompleted as EventListener,
-    );
+    window.addEventListener("profile-update-started", handleUpdateStarted);
+    window.addEventListener("profile-update-completed", handleUpdateCompleted);
 
     return () => {
       // 清理事件监听
-      window.removeEventListener(
-        "profile-update-started",
-        handleUpdateStarted as EventListener,
-      );
+      window.removeEventListener("profile-update-started", handleUpdateStarted);
       window.removeEventListener(
         "profile-update-completed",
-        handleUpdateCompleted as EventListener,
+        handleUpdateCompleted,
       );
     };
-  }, [itemData.uid, showNextUpdate]);
+  }, [fetchNextUpdateTime, itemData.uid, setLoadingCache, showNextUpdate]);
 
   return (
     <Box
@@ -477,7 +515,7 @@ export const ProfileItem = (props: Props) => {
         onContextMenu={(event) => {
           const { clientX, clientY } = event;
           setPosition({ top: clientY, left: clientX });
-          setAnchorEl(event.currentTarget);
+          setAnchorEl(event.currentTarget as HTMLElement);
           event.preventDefault();
         }}
       >
@@ -508,9 +546,31 @@ export const ProfileItem = (props: Props) => {
         )}
         <Box position="relative">
           <Box sx={{ display: "flex", justifyContent: "start" }}>
+            {batchMode && (
+              <IconButton
+                size="small"
+                sx={{ padding: "2px", marginRight: "4px", marginLeft: "-8px" }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (onSelectionChange) {
+                    onSelectionChange();
+                  }
+                }}
+              >
+                {isSelected ? (
+                  <CheckBoxRounded color="primary" />
+                ) : (
+                  <CheckBoxOutlineBlankRounded />
+                )}
+              </IconButton>
+            )}
             <Box
               ref={setNodeRef}
-              sx={{ display: "flex", margin: "auto 0" }}
+              sx={{
+                display: "flex",
+                margin: "auto 0",
+                ...(batchMode && { marginLeft: "-4px" }),
+              }}
               {...attributes}
               {...listeners}
             >
@@ -525,7 +585,7 @@ export const ProfileItem = (props: Props) => {
             </Box>
 
             <Typography
-              width="calc(100% - 36px)"
+              width={batchMode ? "calc(100% - 56px)" : "calc(100% - 36px)"}
               sx={{ fontSize: "18px", fontWeight: "600", lineHeight: "26px" }}
               variant="h6"
               component="h2"
@@ -688,7 +748,7 @@ export const ProfileItem = (props: Props) => {
           schema="clash"
           onSave={async (prev, curr) => {
             await saveProfileFile(uid, curr ?? "");
-            onSave && onSave(prev, curr);
+            onSave?.(prev, curr);
           }}
           onClose={() => setFileOpen(false)}
         />
@@ -734,7 +794,7 @@ export const ProfileItem = (props: Props) => {
           schema="clash"
           onSave={async (prev, curr) => {
             await saveProfileFile(option?.merge ?? "", curr ?? "");
-            onSave && onSave(prev, curr);
+            onSave?.(prev, curr);
           }}
           onClose={() => setMergeOpen(false)}
         />
@@ -746,7 +806,7 @@ export const ProfileItem = (props: Props) => {
           language="javascript"
           onSave={async (prev, curr) => {
             await saveProfileFile(option?.script ?? "", curr ?? "");
-            onSave && onSave(prev, curr);
+            onSave?.(prev, curr);
           }}
           onClose={() => setScriptOpen(false)}
         />

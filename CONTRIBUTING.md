@@ -2,6 +2,10 @@
 
 Thank you for your interest in contributing to Clash Verge Rev! This document provides guidelines and instructions to help you set up your development environment and start contributing.
 
+## Internationalization (i18n)
+
+We welcome translations and improvements to existing locales. Please follow the detailed guidelines in [CONTRIBUTING_i18n.md](docs/CONTRIBUTING_i18n.md) for instructions on extracting strings, file naming conventions, testing translations, and submitting translation PRs.
+
 ## Development Setup
 
 Before you start contributing to the project, you need to set up your development environment. Here are the steps you need to follow:
@@ -59,8 +63,9 @@ You have two options for downloading the clash binary:
 
   ```shell
   pnpm run prebuild
-  # Use '--force' to force update to the latest version
-  # pnpm run prebuild --force
+  # Use '--force' or '-f' to update both the Mihomo core version
+  # and the Clash Verge Rev service version to the latest available.
+  pnpm run prebuild --force
   ```
 
 - Manually download it from the [Mihomo release](https://github.com/MetaCubeX/mihomo/releases). After downloading, rename the binary according to the [Tauri configuration](https://tauri.app/v1/api/config#bundleconfig.externalbin).
@@ -73,6 +78,8 @@ To run the development server, use the following command:
 pnpm dev
 # If an app instance already exists, use a different command
 pnpm dev:diff
+# To using tauri built-in dev tool
+pnpm dev:tauri
 ```
 
 ### Build the Project

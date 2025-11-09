@@ -1,29 +1,29 @@
-import { useMemo, useRef, useState, useCallback } from "react";
-import { useLockFn } from "ahooks";
-import { Box, Button, IconButton, MenuItem } from "@mui/material";
-import { Virtuoso } from "react-virtuoso";
-import { useTranslation } from "react-i18next";
 import {
+  PauseCircleOutlineRounded,
+  PlayCircleOutlineRounded,
   TableChartRounded,
   TableRowsRounded,
-  PlayCircleOutlineRounded,
-  PauseCircleOutlineRounded,
 } from "@mui/icons-material";
-import { closeAllConnections } from "@/services/cmds";
-import { useConnectionSetting } from "@/services/states";
+import { Box, Button, IconButton, MenuItem } from "@mui/material";
+import { useLockFn } from "ahooks";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { Virtuoso } from "react-virtuoso";
+import { closeAllConnections } from "tauri-plugin-mihomo-api";
+
 import { BaseEmpty, BasePage } from "@/components/base";
-import { ConnectionItem } from "@/components/connection/connection-item";
-import { ConnectionTable } from "@/components/connection/connection-table";
+import { BaseSearchBox } from "@/components/base/base-search-box";
+import { BaseStyledSelect } from "@/components/base/base-styled-select";
 import {
   ConnectionDetail,
   ConnectionDetailRef,
 } from "@/components/connection/connection-detail";
-import parseTraffic from "@/utils/parse-traffic";
-import { BaseSearchBox } from "@/components/base/base-search-box";
-import { BaseStyledSelect } from "@/components/base/base-styled-select";
-import { useTheme } from "@mui/material/styles";
+import { ConnectionItem } from "@/components/connection/connection-item";
+import { ConnectionTable } from "@/components/connection/connection-table";
+import { useConnectionData } from "@/hooks/use-connection-data";
 import { useVisibility } from "@/hooks/use-visibility";
-import { useAppData } from "@/providers/app-data-provider";
+import { useConnectionSetting } from "@/services/states";
+import parseTraffic from "@/utils/parse-traffic";
 
 const initConn: IConnections = {
   uploadTotal: 0,
@@ -36,29 +36,34 @@ type OrderFunc = (list: IConnectionsItem[]) => IConnectionsItem[];
 const ConnectionsPage = () => {
   const { t } = useTranslation();
   const pageVisible = useVisibility();
-  const theme = useTheme();
-  const _isDark = theme.palette.mode === "dark";
-  const [match, setMatch] = useState(() => (_: string) => true);
-  const [curOrderOpt, setOrderOpt] = useState("Default");
+  const [match, setMatch] = useState<(input: string) => boolean>(
+    () => () => true,
+  );
+  const [curOrderOpt, setCurOrderOpt] = useState("Default");
 
-  // 使用全局数据
-  const { connections } = useAppData();
+  const {
+    response: { data: connections },
+  } = useConnectionData();
 
   const [setting, setSetting] = useConnectionSetting();
 
   const isTableLayout = setting.layout === "table";
 
-  const orderOpts: Record<string, OrderFunc> = {
-    Default: (list) =>
-      list.sort(
-        (a, b) =>
-          new Date(b.start || "0").getTime()! -
-          new Date(a.start || "0").getTime()!,
-      ),
-    "Upload Speed": (list) => list.sort((a, b) => b.curUpload! - a.curUpload!),
-    "Download Speed": (list) =>
-      list.sort((a, b) => b.curDownload! - a.curDownload!),
-  };
+  const orderOpts = useMemo<Record<string, OrderFunc>>(
+    () => ({
+      Default: (list) =>
+        list.sort(
+          (a, b) =>
+            new Date(b.start || "0").getTime()! -
+            new Date(a.start || "0").getTime()!,
+        ),
+      "Upload Speed": (list) =>
+        list.sort((a, b) => b.curUpload! - a.curUpload!),
+      "Download Speed": (list) =>
+        list.sort((a, b) => b.curDownload! - a.curDownload!),
+    }),
+    [],
+  );
 
   const [isPaused, setIsPaused] = useState(false);
   const [frozenData, setFrozenData] = useState<IConnections | null>(null);
@@ -70,33 +75,33 @@ const ConnectionsPage = () => {
     if (isPaused) {
       return (
         frozenData ?? {
-          uploadTotal: connections.uploadTotal,
-          downloadTotal: connections.downloadTotal,
-          connections: connections.data,
+          uploadTotal: connections?.uploadTotal,
+          downloadTotal: connections?.downloadTotal,
+          connections: connections?.connections,
         }
       );
     }
 
     return {
-      uploadTotal: connections.uploadTotal,
-      downloadTotal: connections.downloadTotal,
-      connections: connections.data,
+      uploadTotal: connections?.uploadTotal,
+      downloadTotal: connections?.downloadTotal,
+      connections: connections?.connections,
     };
   }, [isPaused, frozenData, connections, pageVisible]);
 
   const [filterConn] = useMemo(() => {
     const orderFunc = orderOpts[curOrderOpt];
-    let conns = displayData.connections.filter((conn) => {
+    let conns = displayData.connections?.filter((conn) => {
       const { host, destinationIP, process } = conn.metadata;
       return (
         match(host || "") || match(destinationIP || "") || match(process || "")
       );
     });
 
-    if (orderFunc) conns = orderFunc(conns);
+    if (orderFunc) conns = orderFunc(conns ?? []);
 
     return [conns];
-  }, [displayData, match, curOrderOpt]);
+  }, [displayData, match, curOrderOpt, orderOpts]);
 
   const onCloseAll = useLockFn(closeAllConnections);
 
@@ -110,9 +115,9 @@ const ConnectionsPage = () => {
     setIsPaused((prev) => {
       if (!prev) {
         setFrozenData({
-          uploadTotal: connections.uploadTotal,
-          downloadTotal: connections.downloadTotal,
-          connections: connections.data,
+          uploadTotal: connections?.uploadTotal ?? 0,
+          downloadTotal: connections?.downloadTotal ?? 0,
+          connections: connections?.connections ?? [],
         });
       } else {
         setFrozenData(null);
@@ -192,7 +197,7 @@ const ConnectionsPage = () => {
         {!isTableLayout && (
           <BaseStyledSelect
             value={curOrderOpt}
-            onChange={(e) => setOrderOpt(e.target.value)}
+            onChange={(e) => setCurOrderOpt(e.target.value)}
           >
             {Object.keys(orderOpts).map((opt) => (
               <MenuItem key={opt} value={opt}>
@@ -204,7 +209,7 @@ const ConnectionsPage = () => {
         <BaseSearchBox onSearch={handleSearch} />
       </Box>
 
-      {filterConn.length === 0 ? (
+      {!filterConn || filterConn.length === 0 ? (
         <BaseEmpty />
       ) : isTableLayout ? (
         <ConnectionTable

@@ -1,21 +1,22 @@
+use crate::config::Config;
 use anyhow::Result;
-use base64::{engine::general_purpose, Engine as _};
+use base64::{Engine as _, engine::general_purpose};
+use isahc::config::DnsCache;
 use isahc::prelude::*;
+use isahc::{HttpClient, config::SslOption};
 use isahc::{
     config::RedirectPolicy,
     http::{
-        header::{HeaderMap, HeaderValue, USER_AGENT},
         StatusCode, Uri,
+        header::{HeaderMap, HeaderValue, USER_AGENT},
     },
 };
-use isahc::{config::SslOption, HttpClient};
+use smartstring::alias::String;
 use std::time::{Duration, Instant};
 use sysproxy::Sysproxy;
 use tauri::Url;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
-
-use crate::config::Config;
 
 #[derive(Debug)]
 pub struct HttpResponse {
@@ -25,7 +26,7 @@ pub struct HttpResponse {
 }
 
 impl HttpResponse {
-    pub fn new(status: StatusCode, headers: HeaderMap, body: String) -> Self {
+    pub const fn new(status: StatusCode, headers: HeaderMap, body: String) -> Self {
         Self {
             status,
             headers,
@@ -33,11 +34,11 @@ impl HttpResponse {
         }
     }
 
-    pub fn status(&self) -> StatusCode {
+    pub const fn status(&self) -> StatusCode {
         self.status
     }
 
-    pub fn headers(&self) -> &HeaderMap {
+    pub const fn headers(&self) -> &HeaderMap {
         &self.headers
     }
 
@@ -61,6 +62,12 @@ pub struct NetworkManager {
     connection_error_count: Mutex<usize>,
 }
 
+impl Default for NetworkManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NetworkManager {
     pub fn new() -> Self {
         Self {
@@ -73,8 +80,7 @@ impl NetworkManager {
     }
 
     async fn record_connection_error(&self, error: &str) {
-        let mut last_error = self.last_connection_error.lock().await;
-        *last_error = Some((Instant::now(), error.to_string()));
+        *self.last_connection_error.lock().await = Some((Instant::now(), error.into()));
 
         let mut count = self.connection_error_count.lock().await;
         *count += 1;
@@ -82,16 +88,15 @@ impl NetworkManager {
 
     async fn should_reset_clients(&self) -> bool {
         let count = *self.connection_error_count.lock().await;
-        let last_error_guard = self.last_connection_error.lock().await;
-
         if count > 5 {
             return true;
         }
 
-        if let Some((time, _)) = &*last_error_guard {
-            if time.elapsed() < Duration::from_secs(30) && count > 2 {
-                return true;
-            }
+        if let Some((time, _)) = &*self.last_connection_error.lock().await
+            && time.elapsed() < Duration::from_secs(30)
+            && count > 2
+        {
+            return true;
         }
 
         false
@@ -111,17 +116,15 @@ impl NetworkManager {
         accept_invalid_certs: bool,
         timeout_secs: Option<u64>,
     ) -> Result<HttpClient> {
-        let proxy_uri_clone = proxy_uri.clone();
-        let headers_clone = default_headers.clone();
-        let client = {
+        {
             let mut builder = HttpClient::builder();
 
-            builder = match proxy_uri_clone {
+            builder = match proxy_uri {
                 Some(uri) => builder.proxy(Some(uri)),
                 None => builder.proxy(None),
             };
 
-            for (name, value) in headers_clone.iter() {
+            for (name, value) in default_headers.iter() {
                 builder = builder.default_header(name, value);
             }
 
@@ -135,10 +138,14 @@ impl NetworkManager {
 
             builder = builder.redirect_policy(RedirectPolicy::Follow);
 
-            Ok(builder.build()?)
-        };
+            // 禁用缓存，不关心连接复用
+            builder = builder.connection_cache_size(0);
 
-        client
+            // 禁用 DNS 缓存，避免因 DNS 变化导致的问题
+            builder = builder.dns_cache(DnsCache::Disable);
+
+            Ok(builder.build()?)
+        }
     }
 
     pub async fn create_request(
@@ -152,10 +159,10 @@ impl NetworkManager {
             ProxyType::None => None,
             ProxyType::Localhost => {
                 let port = {
-                    let verge_port = Config::verge().await.latest_ref().verge_mixed_port;
+                    let verge_port = Config::verge().await.latest_arc().verge_mixed_port;
                     match verge_port {
                         Some(port) => port,
-                        None => Config::clash().await.latest_ref().get_mixed_port(),
+                        None => Config::clash().await.latest_arc().get_mixed_port(),
                     }
                 };
                 let proxy_scheme = format!("http://127.0.0.1:{port}");
@@ -175,8 +182,9 @@ impl NetworkManager {
         headers.insert(
             USER_AGENT,
             HeaderValue::from_str(
-                &user_agent
-                    .unwrap_or_else(|| format!("clash-verge/v{}", env!("CARGO_PKG_VERSION"))),
+                &user_agent.unwrap_or_else(|| {
+                    format!("clash-verge/v{}", env!("CARGO_PKG_VERSION")).into()
+                }),
             )?,
         );
 
@@ -200,15 +208,15 @@ impl NetworkManager {
         let parsed = Url::parse(url)?;
         let mut extra_headers = HeaderMap::new();
 
-        if !parsed.username().is_empty() {
-            if let Some(pass) = parsed.password() {
-                let auth_str = format!("{}:{}", parsed.username(), pass);
-                let encoded = general_purpose::STANDARD.encode(auth_str);
-                extra_headers.insert(
-                    "Authorization",
-                    HeaderValue::from_str(&format!("Basic {}", encoded))?,
-                );
-            }
+        if !parsed.username().is_empty()
+            && let Some(pass) = parsed.password()
+        {
+            let auth_str = format!("{}:{}", parsed.username(), pass);
+            let encoded = general_purpose::STANDARD.encode(auth_str);
+            extra_headers.insert(
+                "Authorization",
+                HeaderValue::from_str(&format!("Basic {}", encoded))?,
+            );
         }
 
         let clean_url = {
@@ -234,7 +242,7 @@ impl NetworkManager {
             let status = response.status();
             let headers = response.headers().clone();
             let body = response.text().await?;
-            Ok::<_, anyhow::Error>(HttpResponse::new(status, headers, body))
+            Ok::<_, anyhow::Error>(HttpResponse::new(status, headers, body.into()))
         })
         .await
         {

@@ -1,7 +1,3 @@
-import { useEffect, useMemo, useState } from "react";
-import { useLockFn } from "ahooks";
-import yaml from "js-yaml";
-import { useTranslation } from "react-i18next";
 import {
   DndContext,
   closestCenter,
@@ -15,6 +11,10 @@ import {
   SortableContext,
   sortableKeyboardCoordinates,
 } from "@dnd-kit/sortable";
+import {
+  VerticalAlignTopRounded,
+  VerticalAlignBottomRounded,
+} from "@mui/icons-material";
 import {
   Autocomplete,
   Box,
@@ -30,28 +30,36 @@ import {
   TextField,
   styled,
 } from "@mui/material";
+import { useLockFn } from "ahooks";
 import {
-  VerticalAlignTopRounded,
-  VerticalAlignBottomRounded,
-} from "@mui/icons-material";
+  requestIdleCallback,
+  cancelIdleCallback,
+} from "foxact/request-idle-callback";
+import yaml from "js-yaml";
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import { Controller, useForm } from "react-hook-form";
+import { useTranslation } from "react-i18next";
+import MonacoEditor from "react-monaco-editor";
+import { Virtuoso } from "react-virtuoso";
+
+import { Switch } from "@/components/base";
 import { GroupItem } from "@/components/profile/group-item";
 import {
   getNetworkInterfaces,
   readProfileFile,
   saveProfileFile,
 } from "@/services/cmds";
-import { Switch } from "@/components/base";
-import getSystem from "@/utils/get-system";
-import { BaseSearchBox } from "../base/base-search-box";
-import { Virtuoso } from "react-virtuoso";
-import MonacoEditor from "react-monaco-editor";
-import { useThemeMode } from "@/services/states";
-import { Controller, useForm } from "react-hook-form";
 import { showNotice } from "@/services/noticeService";
-import {
-  requestIdleCallback,
-  cancelIdleCallback,
-} from "foxact/request-idle-callback";
+import { useThemeMode } from "@/services/states";
+import getSystem from "@/utils/get-system";
+
+import { BaseSearchBox } from "../base/base-search-box";
 
 interface Props {
   proxiesUid: string;
@@ -64,6 +72,50 @@ interface Props {
 }
 
 const builtinProxyPolicies = ["DIRECT", "REJECT", "REJECT-DROP", "PASS"];
+
+const normalizeDeleteSeq = (input?: unknown): string[] => {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  const names = input
+    .map((item) => {
+      if (typeof item === "string") {
+        return item;
+      }
+
+      if (
+        item &&
+        typeof item === "object" &&
+        "name" in item &&
+        typeof (item as { name: unknown }).name === "string"
+      ) {
+        return (item as { name: string }).name;
+      }
+
+      return undefined;
+    })
+    .filter(
+      (name): name is string => typeof name === "string" && name.length > 0,
+    );
+
+  return Array.from(new Set(names));
+};
+
+const buildGroupsYaml = (
+  prepend: IProxyGroupConfig[],
+  append: IProxyGroupConfig[],
+  deleteList: string[],
+) => {
+  return yaml.dump(
+    {
+      prepend,
+      append,
+      delete: deleteList,
+    },
+    { forceQuotes: true },
+  );
+};
 
 export const GroupsEditorViewer = (props: Props) => {
   const { mergeUid, proxiesUid, profileUid, property, open, onClose, onSave } =
@@ -158,43 +210,55 @@ export const GroupsEditorViewer = (props: Props) => {
       }
     }
   };
-  const fetchContent = async () => {
-    let data = await readProfileFile(property);
-    let obj = yaml.load(data) as ISeqProfileConfig | null;
+  const fetchContent = useCallback(async () => {
+    const data = await readProfileFile(property);
+    const obj = yaml.load(data) as ISeqProfileConfig | null;
 
     setPrependSeq(obj?.prepend || []);
     setAppendSeq(obj?.append || []);
-    setDeleteSeq(obj?.delete || []);
+    setDeleteSeq((prev) => {
+      const normalized = normalizeDeleteSeq(obj?.delete);
+      if (
+        normalized.length === prev.length &&
+        normalized.every((item, index) => item === prev[index])
+      ) {
+        return prev;
+      }
+      return normalized;
+    });
 
     setPrevData(data);
     setCurrData(data);
-  };
+  }, [property]);
 
   useEffect(() => {
-    if (currData === "") return;
-    if (visualization !== true) return;
+    if (currData === "" || visualization !== true) {
+      return;
+    }
 
-    let obj = yaml.load(currData) as {
-      prepend: [];
-      append: [];
-      delete: [];
-    } | null;
-    setPrependSeq(obj?.prepend || []);
-    setAppendSeq(obj?.append || []);
-    setDeleteSeq(obj?.delete || []);
-  }, [visualization]);
+    const obj = yaml.load(currData) as ISeqProfileConfig | null;
+    startTransition(() => {
+      setPrependSeq(obj?.prepend ?? []);
+      setAppendSeq(obj?.append ?? []);
+      setDeleteSeq((prev) => {
+        const normalized = normalizeDeleteSeq(obj?.delete);
+        if (
+          normalized.length === prev.length &&
+          normalized.every((item, index) => item === prev[index])
+        ) {
+          return prev;
+        }
+        return normalized;
+      });
+    });
+  }, [currData, visualization]);
 
   // 优化：异步处理大数据yaml.dump，避免UI卡死
   useEffect(() => {
     if (prependSeq && appendSeq && deleteSeq) {
       const serialize = () => {
         try {
-          setCurrData(
-            yaml.dump(
-              { prepend: prependSeq, append: appendSeq, delete: deleteSeq },
-              { forceQuotes: true },
-            ),
-          );
+          setCurrData(buildGroupsYaml(prependSeq, appendSeq, deleteSeq));
         } catch (e) {
           console.warn("[GroupsEditorViewer] yaml.dump failed:", e);
           // 防止异常导致UI卡死
@@ -208,66 +272,75 @@ export const GroupsEditorViewer = (props: Props) => {
     }
   }, [prependSeq, appendSeq, deleteSeq]);
 
-  const fetchProxyPolicy = async () => {
-    let data = await readProfileFile(profileUid);
-    let proxiesData = await readProfileFile(proxiesUid);
-    let originGroupsObj = yaml.load(data) as {
+  const fetchProxyPolicy = useCallback(async () => {
+    const data = await readProfileFile(profileUid);
+    const proxiesData = await readProfileFile(proxiesUid);
+    const originGroupsObj = yaml.load(data) as {
       "proxy-groups": IProxyGroupConfig[];
     } | null;
 
-    let originProxiesObj = yaml.load(data) as { proxies: [] } | null;
-    let originProxies = originProxiesObj?.proxies || [];
-    let moreProxiesObj = yaml.load(proxiesData) as ISeqProfileConfig | null;
-    let morePrependProxies = moreProxiesObj?.prepend || [];
-    let moreAppendProxies = moreProxiesObj?.append || [];
-    let moreDeleteProxies =
-      moreProxiesObj?.delete || ([] as string[] | { name: string }[]);
+    const originProxiesObj = yaml.load(data) as { proxies: [] } | null;
+    const originProxies = originProxiesObj?.proxies || [];
+    const moreProxiesObj = yaml.load(proxiesData) as ISeqProfileConfig | null;
+    const morePrependProxies = moreProxiesObj?.prepend || [];
+    const moreAppendProxies = moreProxiesObj?.append || [];
+    const moreDeleteProxies = normalizeDeleteSeq(moreProxiesObj?.delete);
 
-    let proxies = morePrependProxies.concat(
+    const proxies = morePrependProxies.concat(
       originProxies.filter((proxy: any) => {
-        if (proxy.name) {
-          return !moreDeleteProxies.includes(proxy.name);
-        } else {
-          return !moreDeleteProxies.includes(proxy);
-        }
+        const proxyName =
+          typeof proxy === "string"
+            ? proxy
+            : (proxy?.name as string | undefined);
+        return proxyName ? !moreDeleteProxies.includes(proxyName) : true;
       }),
       moreAppendProxies,
     );
 
-    setProxyPolicyList(
-      builtinProxyPolicies.concat(
-        prependSeq.map((group: IProxyGroupConfig) => group.name),
-        originGroupsObj?.["proxy-groups"]
-          .map((group: IProxyGroupConfig) => group.name)
-          .filter((name) => !deleteSeq.includes(name)) || [],
-        appendSeq.map((group: IProxyGroupConfig) => group.name),
-        proxies.map((proxy: any) => proxy.name),
-      ),
-    );
-  };
-  const fetchProfile = async () => {
-    let data = await readProfileFile(profileUid);
-    let mergeData = await readProfileFile(mergeUid);
-    let globalMergeData = await readProfileFile("Merge");
+    const proxyNames = proxies
+      .map((proxy: any) =>
+        typeof proxy === "string" ? proxy : (proxy?.name as string | undefined),
+      )
+      .filter(
+        (name): name is string => typeof name === "string" && name.length > 0,
+      );
 
-    let originGroupsObj = yaml.load(data) as {
+    const computedPolicyList = builtinProxyPolicies.concat(
+      prependSeq.map((group: IProxyGroupConfig) => group.name),
+      (originGroupsObj?.["proxy-groups"] || [])
+        .map((group: IProxyGroupConfig) => group.name)
+        .filter((name) => !deleteSeq.includes(name)),
+      appendSeq.map((group: IProxyGroupConfig) => group.name),
+      proxyNames,
+    );
+
+    setProxyPolicyList(Array.from(new Set(computedPolicyList)));
+  }, [appendSeq, deleteSeq, prependSeq, profileUid, proxiesUid]);
+  const fetchProfile = useCallback(async () => {
+    const data = await readProfileFile(profileUid);
+    const mergeData = await readProfileFile(mergeUid);
+    const globalMergeData = await readProfileFile("Merge");
+
+    const originGroupsObj = yaml.load(data) as {
       "proxy-groups": IProxyGroupConfig[];
     } | null;
 
-    let originProviderObj = yaml.load(data) as { "proxy-providers": {} } | null;
-    let originProvider = originProviderObj?.["proxy-providers"] || {};
-
-    let moreProviderObj = yaml.load(mergeData) as {
-      "proxy-providers": {};
+    const originProviderObj = yaml.load(data) as {
+      "proxy-providers": Record<string, unknown>;
     } | null;
-    let moreProvider = moreProviderObj?.["proxy-providers"] || {};
+    const originProvider = originProviderObj?.["proxy-providers"] || {};
 
-    let globalProviderObj = yaml.load(globalMergeData) as {
-      "proxy-providers": {};
+    const moreProviderObj = yaml.load(mergeData) as {
+      "proxy-providers": Record<string, unknown>;
     } | null;
-    let globalProvider = globalProviderObj?.["proxy-providers"] || {};
+    const moreProvider = moreProviderObj?.["proxy-providers"] || {};
 
-    let provider = Object.assign(
+    const globalProviderObj = yaml.load(globalMergeData) as {
+      "proxy-providers": Record<string, unknown>;
+    } | null;
+    const globalProvider = globalProviderObj?.["proxy-providers"] || {};
+
+    const provider = Object.assign(
       {},
       originProvider,
       moreProvider,
@@ -276,24 +349,25 @@ export const GroupsEditorViewer = (props: Props) => {
 
     setProxyProviderList(Object.keys(provider));
     setGroupList(originGroupsObj?.["proxy-groups"] || []);
-  };
-  const getInterfaceNameList = async () => {
-    let list = await getNetworkInterfaces();
+  }, [mergeUid, profileUid]);
+  const getInterfaceNameList = useCallback(async () => {
+    const list = await getNetworkInterfaces();
     setInterfaceNameList(list);
-  };
+  }, []);
   useEffect(() => {
+    if (!open) return;
     fetchProxyPolicy();
-  }, [prependSeq, appendSeq, deleteSeq]);
+  }, [fetchProxyPolicy, open]);
+
   useEffect(() => {
     if (!open) return;
     fetchContent();
-    fetchProxyPolicy();
     fetchProfile();
     getInterfaceNameList();
-  }, [open]);
+  }, [fetchContent, fetchProfile, getInterfaceNameList, open]);
 
   const validateGroup = () => {
-    let group = formIns.getValues();
+    const group = formIns.getValues();
     if (group.name === "") {
       throw new Error(t("Group Name Required"));
     }
@@ -301,9 +375,18 @@ export const GroupsEditorViewer = (props: Props) => {
 
   const handleSave = useLockFn(async () => {
     try {
-      await saveProfileFile(property, currData);
+      const nextData = visualization
+        ? buildGroupsYaml(prependSeq, appendSeq, deleteSeq)
+        : currData;
+
+      if (visualization) {
+        setCurrData(nextData);
+      }
+
+      await saveProfileFile(property, nextData);
       showNotice("success", t("Saved Successfully"));
-      onSave?.(prevData, currData);
+      setPrevData(nextData);
+      onSave?.(prevData, nextData);
       onClose();
     } catch (err: any) {
       showNotice("error", err.toString());
@@ -794,7 +877,7 @@ export const GroupsEditorViewer = (props: Props) => {
                 }
                 increaseViewportBy={256}
                 itemContent={(index) => {
-                  let shift = filteredPrependSeq.length > 0 ? 1 : 0;
+                  const shift = filteredPrependSeq.length > 0 ? 1 : 0;
                   if (filteredPrependSeq.length > 0 && index === 0) {
                     return (
                       <DndContext
@@ -807,10 +890,10 @@ export const GroupsEditorViewer = (props: Props) => {
                             return x.name;
                           })}
                         >
-                          {filteredPrependSeq.map((item, index) => {
+                          {filteredPrependSeq.map((item) => {
                             return (
                               <GroupItem
-                                key={`${item.name}-${index}`}
+                                key={item.name}
                                 type="prepend"
                                 group={item}
                                 onDelete={() => {
@@ -827,10 +910,10 @@ export const GroupsEditorViewer = (props: Props) => {
                       </DndContext>
                     );
                   } else if (index < filteredGroupList.length + shift) {
-                    let newIndex = index - shift;
+                    const newIndex = index - shift;
                     return (
                       <GroupItem
-                        key={`${filteredGroupList[newIndex].name}-${index}`}
+                        key={filteredGroupList[newIndex].name}
                         type={
                           deleteSeq.includes(filteredGroupList[newIndex].name)
                             ? "delete"
@@ -867,10 +950,10 @@ export const GroupsEditorViewer = (props: Props) => {
                             return x.name;
                           })}
                         >
-                          {filteredAppendSeq.map((item, index) => {
+                          {filteredAppendSeq.map((item) => {
                             return (
                               <GroupItem
-                                key={`${item.name}-${index}`}
+                                key={item.name}
                                 type="append"
                                 group={item}
                                 onDelete={() => {

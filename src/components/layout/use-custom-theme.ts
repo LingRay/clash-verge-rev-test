@@ -1,6 +1,3 @@
-import { useVerge } from "@/hooks/use-verge";
-import { defaultDarkTheme, defaultTheme } from "@/pages/_theme";
-import { useSetThemeMode, useThemeMode } from "@/services/states";
 import { alpha, createTheme, Theme as MuiTheme, Shadows } from "@mui/material";
 import {
   arSD as arXDataGrid,
@@ -16,6 +13,10 @@ import {
 import { Theme as TauriOsTheme } from "@tauri-apps/api/window";
 import { useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
+
+import { useVerge } from "@/hooks/use-verge";
+import { defaultDarkTheme, defaultTheme } from "@/pages/_theme";
+import { useSetThemeMode, useThemeMode } from "@/services/states";
 
 const languagePackMap: Record<string, any> = {
   zh: { ...zhXDataGrid },
@@ -49,6 +50,16 @@ export const useCustomTheme = () => {
 
   useEffect(() => {
     if (theme_mode !== "system") {
+      return;
+    }
+
+    const preferBrowserMatchMedia =
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      // Skip Tauri flow when running purely in browser.
+      !("__TAURI__" in window);
+
+    if (preferBrowserMatchMedia) {
       return;
     }
 
@@ -88,6 +99,44 @@ export const useCustomTheme = () => {
         });
     };
   }, [theme_mode, appWindow, setMode]);
+
+  useEffect(() => {
+    if (theme_mode !== "system") {
+      return;
+    }
+
+    if (
+      typeof window === "undefined" ||
+      typeof window.matchMedia !== "function"
+    ) {
+      return;
+    }
+
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const syncMode = (isDark: boolean) => setMode(isDark ? "dark" : "light");
+    const handleChange = (event: MediaQueryListEvent) =>
+      syncMode(event.matches);
+
+    syncMode(mediaQuery.matches);
+
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", handleChange);
+      return () => mediaQuery.removeEventListener("change", handleChange);
+    }
+
+    type MediaQueryListLegacy = MediaQueryList & {
+      addListener?: (
+        listener: (this: MediaQueryList, event: MediaQueryListEvent) => void,
+      ) => void;
+      removeListener?: (
+        listener: (this: MediaQueryList, event: MediaQueryListEvent) => void,
+      ) => void;
+    };
+
+    const legacyQuery = mediaQuery as MediaQueryListLegacy;
+    legacyQuery.addListener?.(handleChange);
+    return () => legacyQuery.removeListener?.(handleChange);
+  }, [theme_mode, setMode]);
 
   useEffect(() => {
     if (theme_mode === undefined) {
