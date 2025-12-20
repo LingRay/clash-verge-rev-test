@@ -1,6 +1,6 @@
 use super::CmdResult;
 use crate::{
-    cmd::StringifyErr,
+    cmd::StringifyErr as _,
     config::{Config, IVerge},
     core, feat,
 };
@@ -19,7 +19,7 @@ pub async fn save_webdav_config(url: String, username: String, password: String)
     Config::verge().await.edit_draft(|e| e.patch_config(&patch));
     Config::verge().await.apply();
 
-    let verge_data = Config::verge().await.latest_arc();
+    let verge_data = Config::verge().await.data_arc();
     verge_data.save_file().await.stringify_err()?;
     core::backup::WebDavClient::global().reset();
     Ok(())
@@ -28,9 +28,7 @@ pub async fn save_webdav_config(url: String, username: String, password: String)
 /// 创建 WebDAV 备份并上传
 #[tauri::command]
 pub async fn create_webdav_backup() -> CmdResult<()> {
-    feat::create_backup_and_upload_webdav()
-        .await
-        .stringify_err()
+    feat::create_backup_and_upload_webdav().await.stringify_err()
 }
 
 /// 列出 WebDAV 上的备份文件

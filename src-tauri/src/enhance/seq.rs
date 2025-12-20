@@ -50,7 +50,6 @@ pub fn use_seq(seq: SeqMap, mut config: Mapping, field: &str) -> Mapping {
         let mut new_groups = Sequence::new();
         for group in groups {
             if let Value::Mapping(group_map) = group {
-                let mut new_group = group_map.clone();
                 if let Some(Value::Sequence(proxies)) = group_map.get("proxies") {
                     let filtered_proxies: Sequence = proxies
                         .iter()
@@ -63,20 +62,14 @@ pub fn use_seq(seq: SeqMap, mut config: Mapping, field: &str) -> Mapping {
                         })
                         .cloned()
                         .collect();
-                    new_group.insert(
-                        Value::String("proxies".into()),
-                        Value::Sequence(filtered_proxies),
-                    );
+                    group_map.insert(Value::String("proxies".into()), Value::Sequence(filtered_proxies));
                 }
-                new_groups.push(Value::Mapping(new_group));
+                new_groups.push(Value::Mapping(group_map.to_owned()));
             } else {
-                new_groups.push(group.clone());
+                new_groups.push(group.to_owned());
             }
         }
-        config.insert(
-            Value::String("proxy-groups".into()),
-            Value::Sequence(new_groups),
-        );
+        config.insert(Value::String("proxy-groups".into()), Value::Sequence(new_groups));
     }
 
     config
@@ -109,8 +102,7 @@ proxy-groups:
   proxies:
     - "proxy1"
 "#;
-        let mut config: Mapping =
-            serde_yaml_ng::from_str(config_str).expect("Failed to parse test config YAML");
+        let mut config: Mapping = serde_yaml_ng::from_str(config_str).expect("Failed to parse test config YAML");
 
         let seq = SeqMap {
             prepend: Sequence::new(),
@@ -161,9 +153,7 @@ proxy-groups:
 
         assert_eq!(group1_proxies.len(), 1);
         assert_eq!(
-            group1_proxies[0]
-                .as_str()
-                .expect("proxy name should be string"),
+            group1_proxies[0].as_str().expect("proxy name should be string"),
             "proxy2"
         );
         assert_eq!(group2_proxies.len(), 0);

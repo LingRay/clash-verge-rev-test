@@ -1,19 +1,11 @@
-use super::{CmdResult, StringifyErr};
-use crate::{
-    core::service::{self, SERVICE_MANAGER, ServiceStatus},
-    utils::i18n::t,
-};
+use super::{CmdResult, StringifyErr as _};
+use crate::core::service::{self, SERVICE_MANAGER, ServiceStatus};
 use smartstring::SmartString;
 
 async fn execute_service_operation_sync(status: ServiceStatus, op_type: &str) -> CmdResult {
-    if let Err(e) = SERVICE_MANAGER
-        .lock()
-        .await
-        .handle_service_status(&status)
-        .await
-    {
+    if let Err(e) = SERVICE_MANAGER.lock().await.handle_service_status(&status).await {
         let emsg = format!("{} Service failed: {}", op_type, e);
-        return Err(SmartString::from(&*t(emsg.as_str()).await));
+        return Err(SmartString::from(emsg));
     }
     Ok(())
 }

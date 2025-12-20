@@ -4,10 +4,14 @@ mod state;
 
 use anyhow::Result;
 use arc_swap::{ArcSwap, ArcSwapOption};
+use clash_verge_logger::AsyncLogger;
+use once_cell::sync::Lazy;
 use std::{fmt, sync::Arc, time::Instant};
+use tauri_plugin_shell::process::CommandChild;
 
-use crate::process::CommandChildGuard;
-use crate::singleton_lazy;
+use crate::singleton;
+
+pub(crate) static CLASH_LOGGER: Lazy<Arc<AsyncLogger>> = Lazy::new(|| Arc::new(AsyncLogger::new()));
 
 #[derive(Debug, serde::Serialize, PartialEq, Eq)]
 pub enum RunningMode {
@@ -35,7 +39,7 @@ pub struct CoreManager {
 #[derive(Debug)]
 struct State {
     running_mode: ArcSwap<RunningMode>,
-    child_sidecar: ArcSwapOption<CommandChildGuard>,
+    child_sidecar: ArcSwapOption<CommandChild>,
 }
 
 impl Default for State {
@@ -57,11 +61,15 @@ impl Default for CoreManager {
 }
 
 impl CoreManager {
+    fn new() -> Self {
+        Self::default()
+    }
+
     pub fn get_running_mode(&self) -> Arc<RunningMode> {
         Arc::clone(&self.state.load().running_mode.load())
     }
 
-    pub fn take_child_sidecar(&self) -> Option<CommandChildGuard> {
+    pub fn take_child_sidecar(&self) -> Option<CommandChild> {
         self.state
             .load()
             .child_sidecar
@@ -78,7 +86,7 @@ impl CoreManager {
         state.running_mode.store(Arc::new(mode));
     }
 
-    pub fn set_running_child_sidecar(&self, child: CommandChildGuard) {
+    pub fn set_running_child_sidecar(&self, child: CommandChild) {
         let state = self.state.load();
         state.child_sidecar.store(Some(Arc::new(child)));
     }
@@ -93,4 +101,4 @@ impl CoreManager {
     }
 }
 
-singleton_lazy!(CoreManager, CORE_MANAGER, CoreManager::default);
+singleton!(CoreManager, CORE_MANAGER);

@@ -1,10 +1,10 @@
 use super::{PrfOption, prfitem::PrfItem};
 use crate::utils::{
-    dirs::{self, PathBufExec},
+    dirs::{self, PathBufExec as _},
     help,
 };
-use crate::{logging, utils::logging::Type};
-use anyhow::{Context, Result, bail};
+use anyhow::{Context as _, Result, bail};
+use clash_verge_logging::{Type, logging};
 use serde::{Deserialize, Serialize};
 use serde_yaml_ng::Mapping;
 use smartstring::alias::String;
@@ -19,6 +19,12 @@ pub struct IProfiles {
 
     /// profile list
     pub items: Option<Vec<PrfItem>>,
+}
+
+pub struct IProfilePreview<'a> {
+    pub uid: &'a String,
+    pub name: &'a String,
+    pub is_current: bool,
 }
 
 /// 清理结果
@@ -39,10 +45,7 @@ macro_rules! patch {
 
 impl IProfiles {
     // Helper to find and remove an item by uid from the items vec, returning its file name (if any).
-    fn take_item_file_by_uid(
-        items: &mut Vec<PrfItem>,
-        target_uid: Option<String>,
-    ) -> Option<String> {
+    fn take_item_file_by_uid(items: &mut Vec<PrfItem>, target_uid: Option<String>) -> Option<String> {
         for (i, _) in items.iter().enumerate() {
             if items[i].uid == target_uid {
                 return items.remove(i).file;
@@ -78,12 +81,7 @@ impl IProfiles {
     }
 
     pub async fn save_file(&self) -> Result<()> {
-        help::save_yaml(
-            &dirs::profiles_path()?,
-            self,
-            Some("# Profiles Config for Clash Verge"),
-        )
-        .await
+        help::save_yaml(&dirs::profiles_path()?, self, Some("# Profiles Config for Clash Verge")).await
     }
 
     /// 只修改current，valid和chain
@@ -153,9 +151,10 @@ impl IProfiles {
                 bail!("the file should not be null");
             }
 
-            let file = item.file.clone().ok_or_else(|| {
-                anyhow::anyhow!("file field is required when file_data is provided")
-            })?;
+            let file = item
+                .file
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("file field is required when file_data is provided"))?;
             let path = dirs::app_profiles_dir()?.join(file.as_str());
 
             fs::write(&path, file_data.as_bytes())
@@ -163,9 +162,7 @@ impl IProfiles {
                 .with_context(|| format!("failed to write to file \"{file}\""))?;
         }
 
-        if self.current.is_none()
-            && (item.itype == Some("remote".into()) || item.itype == Some("local".into()))
-        {
+        if self.current.is_none() && (item.itype == Some("remote".into()) || item.itype == Some("local".into())) {
             self.current = uid.to_owned();
         }
 
@@ -253,11 +250,8 @@ impl IProfiles {
                     // move the field value after save
                     if let Some(file_data) = item.file_data.take() {
                         let file = each.file.take();
-                        let file = file.unwrap_or_else(|| {
-                            item.file
-                                .take()
-                                .unwrap_or_else(|| format!("{}.yaml", &uid).into())
-                        });
+                        let file =
+                            file.unwrap_or_else(|| item.file.take().unwrap_or_else(|| format!("{}.yaml", &uid).into()));
 
                         // the file must exists
                         each.file = Some(file.clone());
@@ -292,42 +286,24 @@ impl IProfiles {
 
         // remove the main item (if exists) and delete its file
         if let Some(file) = Self::take_item_file_by_uid(&mut items, Some(uid.clone())) {
-            let _ = dirs::app_profiles_dir()?
-                .join(file.as_str())
-                .remove_if_exists()
-                .await;
+            let _ = dirs::app_profiles_dir()?.join(file.as_str()).remove_if_exists().await;
         }
 
         // remove related extension items (merge, script, rules, proxies, groups)
         if let Some(file) = Self::take_item_file_by_uid(&mut items, merge_uid.clone()) {
-            let _ = dirs::app_profiles_dir()?
-                .join(file.as_str())
-                .remove_if_exists()
-                .await;
+            let _ = dirs::app_profiles_dir()?.join(file.as_str()).remove_if_exists().await;
         }
         if let Some(file) = Self::take_item_file_by_uid(&mut items, script_uid.clone()) {
-            let _ = dirs::app_profiles_dir()?
-                .join(file.as_str())
-                .remove_if_exists()
-                .await;
+            let _ = dirs::app_profiles_dir()?.join(file.as_str()).remove_if_exists().await;
         }
         if let Some(file) = Self::take_item_file_by_uid(&mut items, rules_uid.clone()) {
-            let _ = dirs::app_profiles_dir()?
-                .join(file.as_str())
-                .remove_if_exists()
-                .await;
+            let _ = dirs::app_profiles_dir()?.join(file.as_str()).remove_if_exists().await;
         }
         if let Some(file) = Self::take_item_file_by_uid(&mut items, proxies_uid.clone()) {
-            let _ = dirs::app_profiles_dir()?
-                .join(file.as_str())
-                .remove_if_exists()
-                .await;
+            let _ = dirs::app_profiles_dir()?.join(file.as_str()).remove_if_exists().await;
         }
         if let Some(file) = Self::take_item_file_by_uid(&mut items, groups_uid.clone()) {
-            let _ = dirs::app_profiles_dir()?
-                .join(file.as_str())
-                .remove_if_exists()
-                .await;
+            let _ = dirs::app_profiles_dir()?.join(file.as_str()).remove_if_exists().await;
         }
         // delete the original uid
         if current == *uid {
@@ -367,14 +343,16 @@ impl IProfiles {
         self.current.as_ref() == Some(index)
     }
 
-    /// 获取所有的profiles(uid，名称)
-    pub fn all_profile_uid_and_name(&self) -> Option<Vec<(&String, &String)>> {
+    /// 获取所有的profiles(uid，名称, 是否为 current)
+    pub fn profiles_preview(&self) -> Option<Vec<IProfilePreview<'_>>> {
         self.items.as_ref().map(|items| {
             items
                 .iter()
                 .filter_map(|e| {
                     if let (Some(uid), Some(name)) = (e.uid.as_ref(), e.name.as_ref()) {
-                        Some((uid, name))
+                        let is_current = self.is_current_profile_index(uid);
+                        let preview = IProfilePreview { uid, name, is_current };
+                        Some(preview)
                     } else {
                         None
                     }
@@ -446,11 +424,7 @@ impl IProfiles {
                         }
                         Err(e) => {
                             failed_deletions.push(format!("{file_name}: {e}").into());
-                            logging!(
-                                warn,
-                                Type::Config,
-                                "Warning: 清理文件失败: {file_name} - {e}"
-                            );
+                            logging!(warn, Type::Config, "Warning: 清理文件失败: {file_name} - {e}");
                         }
                     }
                 }
@@ -572,10 +546,7 @@ impl IProfiles {
 // 特殊的Send-safe helper函数，完全避免跨await持有guard
 use crate::config::Config;
 
-pub async fn profiles_append_item_with_filedata_safe(
-    item: &PrfItem,
-    file_data: Option<String>,
-) -> Result<()> {
+pub async fn profiles_append_item_with_filedata_safe(item: &PrfItem, file_data: Option<String>) -> Result<()> {
     let item = &mut PrfItem::from(item, file_data).await?;
     profiles_append_item_safe(item).await
 }

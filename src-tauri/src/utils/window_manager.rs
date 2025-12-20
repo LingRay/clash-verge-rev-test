@@ -1,11 +1,8 @@
-use crate::{
-    core::handle,
-    logging,
-    utils::{logging::Type, resolve::window::build_new_window},
-};
+use crate::{core::handle, utils::resolve::window::build_new_window};
+use clash_verge_logging::{Type, logging};
 use std::future::Future;
 use std::pin::Pin;
-use tauri::{Manager, WebviewWindow, Wry};
+use tauri::{Manager as _, WebviewWindow, Wry};
 
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
@@ -58,11 +55,7 @@ fn get_window_operation_debounce() -> &'static Mutex<Instant> {
 
 fn should_handle_window_operation() -> bool {
     if WINDOW_OPERATION_IN_PROGRESS.load(Ordering::Acquire) {
-        logging!(
-            warn,
-            Type::Window,
-            "Warning: [防抖] 窗口操作已在进行中，跳过重复调用"
-        );
+        logging!(warn, Type::Window, "Warning: [防抖] 窗口操作已在进行中，跳过重复调用");
         return false;
     }
 
@@ -331,28 +324,25 @@ impl WindowManager {
     /// 创建新窗口,防抖避免重复调用
     pub fn create_window(is_show: bool) -> Pin<Box<dyn Future<Output = bool> + Send>> {
         Box::pin(async move {
-            logging!(
-                info,
-                Type::Window,
-                "开始创建/显示主窗口, is_show={}",
-                is_show
-            );
+            logging!(info, Type::Window, "开始创建/显示主窗口, is_show={}", is_show);
 
             if !is_show {
                 return false;
             }
 
-            match build_new_window().await {
-                Ok(_) => {
+            let window = match build_new_window().await {
+                Ok(window) => {
                     logging!(info, Type::Window, "新窗口创建成功");
+                    window
                 }
                 Err(e) => {
                     logging!(error, Type::Window, "新窗口创建失败: {}", e);
                     return false;
                 }
-            }
+            };
 
-            if WindowOperationResult::Failed == Self::show_main_window().await {
+            // 直接激活刚创建的窗口，避免因防抖导致首次显示被跳过
+            if WindowOperationResult::Failed == Self::activate_window(&window) {
                 return false;
             }
 
@@ -384,8 +374,6 @@ impl WindowManager {
         let is_focused = Self::is_main_window_focused();
         let is_minimized = Self::is_main_window_minimized();
 
-        format!(
-            "窗口状态: {state:?} | 可见: {is_visible} | 有焦点: {is_focused} | 最小化: {is_minimized}"
-        )
+        format!("窗口状态: {state:?} | 可见: {is_visible} | 有焦点: {is_focused} | 最小化: {is_minimized}")
     }
 }

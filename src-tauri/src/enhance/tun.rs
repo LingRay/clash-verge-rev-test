@@ -2,8 +2,6 @@ use serde_yaml_ng::{Mapping, Value};
 
 #[cfg(target_os = "macos")]
 use crate::process::AsyncHandler;
-#[cfg(target_os = "linux")]
-use crate::{logging, utils::logging::Type};
 
 macro_rules! revise {
     ($map: expr, $key: expr, $val: expr) => {
@@ -31,27 +29,6 @@ pub fn use_tun(mut config: Mapping, enable: bool) -> Mapping {
     });
 
     if enable {
-        #[cfg(target_os = "linux")]
-        {
-            let stack_key = Value::from("stack");
-            let should_override = match tun_val.get(&stack_key) {
-                Some(value) => value
-                    .as_str()
-                    .map(|stack| stack.eq_ignore_ascii_case("gvisor"))
-                    .unwrap_or(false),
-                None => true,
-            };
-
-            if should_override {
-                revise!(tun_val, "stack", "mixed");
-                logging!(
-                    warn,
-                    Type::Network,
-                    "Warning: gVisor TUN stack detected on Linux; falling back to 'mixed' for compatibility"
-                );
-            }
-        }
-
         // 读取DNS配置
         let dns_key = Value::from("dns");
         let dns_val = config.get(&dns_key);
@@ -59,10 +36,7 @@ pub fn use_tun(mut config: Mapping, enable: bool) -> Mapping {
             val.as_mapping().cloned().unwrap_or_else(Mapping::new)
         });
         let ipv6_key = Value::from("ipv6");
-        let ipv6_val = config
-            .get(&ipv6_key)
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+        let ipv6_val = config.get(&ipv6_key).and_then(|v| v.as_bool()).unwrap_or(false);
 
         // 检查现有的 enhanced-mode 设置
         let current_mode = dns_val

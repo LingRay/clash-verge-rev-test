@@ -1,9 +1,10 @@
 use super::CmdResult;
-use crate::{cmd::StringifyErr, config::*, core::CoreManager, log_err};
-use anyhow::{Context, anyhow};
+use crate::{cmd::StringifyErr as _, config::Config, core::CoreManager};
+use anyhow::{Context as _, anyhow};
+use clash_verge_logging::{Type, logging_error};
 use serde_yaml_ng::Mapping;
 use smartstring::alias::String;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// 获取运行时配置
 #[tauri::command]
@@ -30,7 +31,7 @@ pub async fn get_runtime_yaml() -> CmdResult<String> {
 
 /// 获取运行时存在的键
 #[tauri::command]
-pub async fn get_runtime_exists() -> CmdResult<Vec<String>> {
+pub async fn get_runtime_exists() -> CmdResult<HashSet<String>> {
     Ok(Config::runtime().await.latest_arc().exists_keys.clone())
 }
 
@@ -57,8 +58,7 @@ pub async fn get_runtime_proxy_chain_config(proxy_chain_exit_node: String) -> Cm
 
         while let Some(proxy) = proxies.iter().find(|proxy| {
             if let serde_yaml_ng::Value::Mapping(proxy_map) = proxy {
-                proxy_map.get("name").map(|x| x.as_str()) == proxy_name
-                    && proxy_map.get("dialer-proxy").is_some()
+                proxy_map.get("name").map(|x| x.as_str()) == proxy_name && proxy_map.get("dialer-proxy").is_some()
             } else {
                 false
             }
@@ -93,20 +93,13 @@ pub async fn get_runtime_proxy_chain_config(proxy_chain_exit_node: String) -> Cm
 
 /// 更新运行时链式代理配置
 #[tauri::command]
-pub async fn update_proxy_chain_config_in_runtime(
-    proxy_chain_config: Option<serde_yaml_ng::Value>,
-) -> CmdResult<()> {
+pub async fn update_proxy_chain_config_in_runtime(proxy_chain_config: Option<serde_yaml_ng::Value>) -> CmdResult<()> {
     {
         let runtime = Config::runtime().await;
         runtime.edit_draft(|d| d.update_proxy_chain_config(proxy_chain_config));
-        runtime.apply();
+        // 我们需要在 CoreManager 中验证并应用配置，这里不应该直接调用 runtime.apply()
     }
-
-    // 生成新的运行配置文件并通知 Clash 核心重新加载
-    let run_path = Config::generate_file(ConfigType::Run)
-        .await
-        .stringify_err()?;
-    log_err!(CoreManager::global().put_configs_force(run_path).await);
+    logging_error!(Type::Core, CoreManager::global().apply_generate_confihg().await);
 
     Ok(())
 }

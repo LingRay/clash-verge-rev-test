@@ -12,6 +12,7 @@ impl AsyncHandler {
     //     async_runtime::handle()
     // }
 
+    #[inline]
     #[track_caller]
     pub fn spawn<F, Fut>(f: F) -> JoinHandle<()>
     where
@@ -23,6 +24,7 @@ impl AsyncHandler {
         async_runtime::spawn(f())
     }
 
+    #[inline]
     #[track_caller]
     pub fn spawn_blocking<T, F>(f: F) -> JoinHandle<T>
     where
@@ -34,7 +36,7 @@ impl AsyncHandler {
         async_runtime::spawn_blocking(f)
     }
 
-    #[allow(dead_code)]
+    #[inline]
     #[track_caller]
     pub fn block_on<Fut>(fut: Fut) -> Fut::Output
     where
@@ -60,12 +62,7 @@ impl AsyncHandler {
         let location = Location::caller();
         let type_str = type_name::<F>();
         let size_str = format!("{} bytes", size);
-        let loc_str = format!(
-            "{}:{}:{}",
-            location.file(),
-            location.line(),
-            location.column()
-        );
+        let loc_str = format!("{}:{}:{}", location.file(), location.line(), location.column());
 
         println!(
             "┌────────────────────┬─────────────────────────────────────────────────────────────────────────────┐"

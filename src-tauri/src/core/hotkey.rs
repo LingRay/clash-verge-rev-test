@@ -1,14 +1,13 @@
 use crate::process::AsyncHandler;
+use crate::singleton;
 use crate::utils::notification::{NotificationEvent, notify_event};
-use crate::{
-    config::Config, core::handle, feat, logging, module::lightweight::entry_lightweight_mode,
-    singleton_with_logging, utils::logging::Type,
-};
+use crate::{config::Config, core::handle, feat, module::lightweight::entry_lightweight_mode};
 use anyhow::{Result, bail};
 use arc_swap::ArcSwap;
+use clash_verge_logging::{Type, logging};
 use smartstring::alias::String;
 use std::{collections::HashMap, fmt, str::FromStr, sync::Arc};
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, ShortcutState};
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt as _, ShortcutState};
 
 /// Enum representing all available hotkey functions
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -20,6 +19,7 @@ pub enum HotkeyFunction {
     ToggleSystemProxy,
     ToggleTunMode,
     EntryLightweightMode,
+    ReactivateProfiles,
     Quit,
     #[cfg(target_os = "macos")]
     Hide,
@@ -35,6 +35,7 @@ impl fmt::Display for HotkeyFunction {
             Self::ToggleSystemProxy => "toggle_system_proxy",
             Self::ToggleTunMode => "toggle_tun_mode",
             Self::EntryLightweightMode => "entry_lightweight_mode",
+            Self::ReactivateProfiles => "reactivate_profiles",
             Self::Quit => "quit",
             #[cfg(target_os = "macos")]
             Self::Hide => "hide",
@@ -55,6 +56,7 @@ impl FromStr for HotkeyFunction {
             "toggle_system_proxy" => Ok(Self::ToggleSystemProxy),
             "toggle_tun_mode" => Ok(Self::ToggleTunMode),
             "entry_lightweight_mode" => Ok(Self::EntryLightweightMode),
+            "reactivate_profiles" => Ok(Self::ReactivateProfiles),
             "quit" => Ok(Self::Quit),
             #[cfg(target_os = "macos")]
             "hide" => Ok(Self::Hide),
@@ -148,6 +150,37 @@ impl Hotkey {
                     notify_event(NotificationEvent::LightweightModeEntered).await;
                 });
             }
+            HotkeyFunction::ReactivateProfiles => {
+                AsyncHandler::spawn(async move || match feat::enhance_profiles().await {
+                    Ok((true, _)) => {
+                        handle::Handle::refresh_clash();
+                        notify_event(NotificationEvent::ProfilesReactivated).await;
+                    }
+                    Ok((false, msg)) => {
+                        let message = if msg.is_empty() {
+                            "Failed to reactivate profiles.".to_string()
+                        } else {
+                            msg.to_string()
+                        };
+                        logging!(
+                            warn,
+                            Type::Hotkey,
+                            "Hotkey profile reactivation failed validation: {}",
+                            message.as_str()
+                        );
+                        handle::Handle::notice_message("reactivate_profiles::error", message);
+                    }
+                    Err(err) => {
+                        logging!(
+                            error,
+                            Type::Hotkey,
+                            "Failed to reactivate subscriptions via hotkey: {}",
+                            err
+                        );
+                        handle::Handle::notice_message("reactivate_profiles::error", err.to_string());
+                    }
+                });
+            }
             HotkeyFunction::Quit => {
                 AsyncHandler::spawn(async move || {
                     notify_event(NotificationEvent::AppQuit).await;
@@ -169,8 +202,7 @@ impl Hotkey {
     pub async fn register_system_hotkey(&self, hotkey: SystemHotkey) -> Result<()> {
         let hotkey_str = hotkey.to_string();
         let function = hotkey.function();
-        self.register_hotkey_with_function(&hotkey_str, function)
-            .await
+        self.register_hotkey_with_function(&hotkey_str, function).await
     }
 
     #[cfg(target_os = "macos")]
@@ -182,11 +214,7 @@ impl Hotkey {
 
     /// Register a hotkey with function enum
     #[allow(clippy::unused_async)]
-    pub async fn register_hotkey_with_function(
-        &self,
-        hotkey: &str,
-        function: HotkeyFunction,
-    ) -> Result<()> {
+    pub async fn register_hotkey_with_function(&self, hotkey: &str, function: HotkeyFunction) -> Result<()> {
         let app_handle = handle::Handle::app_handle();
         let manager = app_handle.global_shortcut();
 
@@ -225,11 +253,8 @@ impl Hotkey {
                     AsyncHandler::spawn(move || async move {
                         logging!(debug, Type::Hotkey, "Executing function directly");
 
-                        let is_enable_global_hotkey = Config::verge()
-                            .await
-                            .latest_arc()
-                            .enable_global_hotkey
-                            .unwrap_or(true);
+                        let is_enable_global_hotkey =
+                            Config::verge().await.data_arc().enable_global_hotkey.unwrap_or(true);
 
                         if is_enable_global_hotkey {
                             Self::execute_function(function);
@@ -258,13 +283,16 @@ impl Hotkey {
     }
 }
 
-// Use unified singleton macro
-singleton_with_logging!(Hotkey, INSTANCE, "Hotkey");
+singleton!(Hotkey, INSTANCE);
 
 impl Hotkey {
     pub async fn init(&self, skip: bool) -> Result<()> {
+        if skip {
+            logging!(debug, Type::Hotkey, "skip register all hotkeys");
+            return Ok(());
+        }
         let verge = Config::verge().await;
-        let enable_global_hotkey = !skip && verge.latest_arc().enable_global_hotkey.unwrap_or(true);
+        let enable_global_hotkey = verge.latest_arc().enable_global_hotkey.unwrap_or(true);
 
         logging!(
             debug,
@@ -274,15 +302,10 @@ impl Hotkey {
         );
 
         // Extract hotkeys data before async operations
-        let hotkeys = verge.latest_arc().hotkeys.as_ref().cloned();
+        let hotkeys = verge.latest_arc().hotkeys.clone();
 
         if let Some(hotkeys) = hotkeys {
-            logging!(
-                debug,
-                Type::Hotkey,
-                "Has {} hotkeys need to register",
-                hotkeys.len()
-            );
+            logging!(debug, Type::Hotkey, "Has {} hotkeys need to register", hotkeys.len());
 
             for hotkey in hotkeys.iter() {
                 let mut iter = hotkey.split(',');
@@ -291,13 +314,7 @@ impl Hotkey {
 
                 match (key, func) {
                     (Some(key), Some(func)) => {
-                        logging!(
-                            debug,
-                            Type::Hotkey,
-                            "Registering hotkey: {} -> {}",
-                            key,
-                            func
-                        );
+                        logging!(debug, Type::Hotkey, "Registering hotkey: {} -> {}", key, func);
                         if let Err(e) = self.register(key, func).await {
                             logging!(
                                 error,
@@ -430,12 +447,7 @@ impl Drop for Hotkey {
     fn drop(&mut self) {
         let app_handle = handle::Handle::app_handle();
         if let Err(e) = app_handle.global_shortcut().unregister_all() {
-            logging!(
-                error,
-                Type::Hotkey,
-                "Error unregistering all hotkeys: {:?}",
-                e
-            );
+            logging!(error, Type::Hotkey, "Error unregistering all hotkeys: {:?}", e);
         }
     }
 }

@@ -1,9 +1,9 @@
 use crate::utils::dirs::get_encryption_key;
 use aes_gcm::{
     Aes256Gcm, Key,
-    aead::{Aead, KeyInit},
+    aead::{Aead as _, KeyInit as _},
 };
-use base64::{Engine, engine::general_purpose::STANDARD};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::cell::Cell;
 use std::future::Future;
@@ -86,8 +86,7 @@ where
 
         match encrypted_opt {
             Some(encrypted) if !encrypted.is_empty() => {
-                let decrypted_string =
-                    decrypt_data(&encrypted).map_err(serde::de::Error::custom)?;
+                let decrypted_string = decrypt_data(&encrypted).map_err(serde::de::Error::custom)?;
                 serde_json::from_str(&decrypted_string).map_err(serde::de::Error::custom)
             }
             _ => Ok(T::default()),

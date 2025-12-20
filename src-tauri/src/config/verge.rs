@@ -1,10 +1,10 @@
 use crate::config::Config;
 use crate::{
     config::{DEFAULT_PAC, deserialize_encrypted, serialize_encrypted},
-    logging,
-    utils::{dirs, help, i18n, logging::Type},
+    utils::{dirs, help, i18n},
 };
 use anyhow::Result;
+use clash_verge_logging::{Type, logging};
 use log::LevelFilter;
 use serde::{Deserialize, Serialize};
 use smartstring::alias::String;
@@ -158,6 +158,15 @@ pub struct IVerge {
     /// 0: 不清理; 1: 1天；2: 7天; 3: 30天; 4: 90天
     pub auto_log_clean: Option<i32>,
 
+    /// Enable scheduled automatic backups
+    pub enable_auto_backup_schedule: Option<bool>,
+
+    /// Automatic backup interval in hours
+    pub auto_backup_interval_hours: Option<u64>,
+
+    /// Create backups automatically when critical configs change
+    pub auto_backup_on_change: Option<bool>,
+
     /// verge 的各种 port 用于覆盖 clash 的各种 port
     #[cfg(not(target_os = "windows"))]
     pub verge_redir_port: Option<u16>,
@@ -299,12 +308,7 @@ impl IVerge {
 
             Self::reload_config_after_fix(config).await?;
         } else {
-            logging!(
-                info,
-                Type::Config,
-                "clash_core配置验证通过: {:?}",
-                config.clash_core
-            );
+            logging!(info, Type::Config, "clash_core配置验证通过: {:?}", config.clash_core);
         }
 
         Ok(())
@@ -329,15 +333,11 @@ impl IVerge {
     }
 
     pub fn get_valid_clash_core(&self) -> String {
-        self.clash_core
-            .clone()
-            .unwrap_or_else(|| "verge-mihomo".into())
+        self.clash_core.clone().unwrap_or_else(|| "verge-mihomo".into())
     }
 
     fn get_system_language() -> String {
-        let sys_lang = sys_locale::get_locale()
-            .unwrap_or_else(|| "en".into())
-            .to_lowercase();
+        let sys_lang = sys_locale::get_locale().unwrap_or_else(|| "en".into()).to_lowercase();
 
         let lang_code = sys_lang.split(['_', '-']).next().unwrap_or("en");
         let supported_languages = i18n::get_supported_languages();
@@ -422,12 +422,15 @@ impl IVerge {
             auto_check_update: Some(true),
             enable_builtin_enhanced: Some(true),
             auto_log_clean: Some(2), // 1: 1天, 2: 7天, 3: 30天, 4: 90天
+            enable_auto_backup_schedule: Some(false),
+            auto_backup_interval_hours: Some(24),
+            auto_backup_on_change: Some(true),
             webdav_url: None,
             webdav_username: None,
             webdav_password: None,
             enable_tray_speed: Some(false),
             // enable_tray_icon: Some(true),
-            tray_inline_proxy_groups: Some(false),
+            tray_inline_proxy_groups: Some(true),
             enable_global_hotkey: Some(true),
             enable_auto_light_weight_mode: Some(false),
             auto_light_weight_minutes: Some(10),
@@ -517,6 +520,9 @@ impl IVerge {
         patch!(proxy_layout_column);
         patch!(test_list);
         patch!(auto_log_clean);
+        patch!(enable_auto_backup_schedule);
+        patch!(auto_backup_interval_hours);
+        patch!(auto_backup_on_change);
 
         patch!(webdav_url);
         patch!(webdav_username);

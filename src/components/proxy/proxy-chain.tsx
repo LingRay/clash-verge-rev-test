@@ -39,8 +39,9 @@ import {
   selectNodeForGroup,
 } from "tauri-plugin-mihomo-api";
 
-import { useAppData } from "@/providers/app-data-context";
+import { useProxiesData } from "@/hooks/use-clash-data";
 import { calcuProxies, updateProxyChainConfigInRuntime } from "@/services/cmds";
+import { debugLog } from "@/utils/debug";
 
 interface ProxyChainItem {
   id: string;
@@ -156,7 +157,11 @@ const SortableItem = ({ proxy, index, onRemove }: SortableItemProps) => {
 
       {proxy.delay !== undefined && (
         <Chip
-          label={proxy.delay > 0 ? `${proxy.delay}ms` : t("timeout") || "超时"}
+          label={
+            proxy.delay > 0
+              ? `${proxy.delay}ms`
+              : t("shared.labels.timeout") || "超时"
+          }
           size="small"
           color={
             proxy.delay > 0 && proxy.delay < 200
@@ -195,7 +200,7 @@ export const ProxyChain = ({
 }: ProxyChainProps) => {
   const theme = useTheme();
   const { t } = useTranslation();
-  const { proxies } = useAppData();
+  const { proxies } = useProxiesData();
   const [isConnecting, setIsConnecting] = useState(false);
   const markUnsavedChanges = useCallback(() => {
     onMarkUnsavedChanges?.();
@@ -280,26 +285,40 @@ export const ProxyChain = ({
 
   const handleConnect = useCallback(async () => {
     if (isConnected) {
-      // 如果已连接，则断开连接
       setIsConnecting(true);
       try {
-        // 清空链式代理配置
         await updateProxyChainConfigInRuntime(null);
 
-        // 切换到 DIRECT 模式断开代理连接
-        // await updateProxyAndSync("GLOBAL", "DIRECT");
+        const targetGroup =
+          mode === "global"
+            ? "GLOBAL"
+            : selectedGroup || localStorage.getItem("proxy-chain-group");
 
-        // 关闭所有连接
+        if (targetGroup) {
+          try {
+            await selectNodeForGroup(targetGroup, "DIRECT");
+          } catch {
+            if (proxyChain.length >= 1) {
+              try {
+                await selectNodeForGroup(targetGroup, proxyChain[0].name);
+              } catch {
+                // ignore
+              }
+            }
+          }
+        }
+
+        localStorage.removeItem("proxy-chain-group");
+        localStorage.removeItem("proxy-chain-exit-node");
+        localStorage.removeItem("proxy-chain-items");
+
         await closeAllConnections();
+        await mutateProxies();
 
-        // 刷新代理信息以更新连接状态
-        mutateProxies();
-
-        // 清空链式代理配置UI
-        // onUpdateChain([]);
+        onUpdateChain([]);
       } catch (error) {
         console.error("Failed to disconnect from proxy chain:", error);
-        alert(t("Failed to disconnect from proxy chain") || "断开链式代理失败");
+        alert(t("proxies.page.chain.disconnectFailed") || "断开链式代理失败");
       } finally {
         setIsConnecting(false);
       }
@@ -307,9 +326,7 @@ export const ProxyChain = ({
     }
 
     if (proxyChain.length < 2) {
-      alert(
-        t("Chain proxy requires at least 2 nodes") || "链式代理至少需要2个节点",
-      );
+      alert(t("proxies.page.chain.minimumNodes") || "链式代理至少需要2个节点");
       return;
     }
 
@@ -317,13 +334,13 @@ export const ProxyChain = ({
     try {
       // 第一步：保存链式代理配置
       const chainProxies = proxyChain.map((node) => node.name);
-      console.log("Saving chain config:", chainProxies);
+      debugLog("Saving chain config:", chainProxies);
       await updateProxyChainConfigInRuntime(chainProxies);
-      console.log("Chain configuration saved successfully");
+      debugLog("Chain configuration saved successfully");
 
       // 第二步：连接到代理链的最后一个节点
       const lastNode = proxyChain[proxyChain.length - 1];
-      console.log(`Connecting to proxy chain, last node: ${lastNode.name}`);
+      debugLog(`Connecting to proxy chain, last node: ${lastNode.name}`);
 
       // 根据模式确定使用的代理组名称
       if (mode !== "global" && !selectedGroup) {
@@ -338,14 +355,22 @@ export const ProxyChain = ({
 
       // 刷新代理信息以更新连接状态
       mutateProxies();
-      console.log("Successfully connected to proxy chain");
+      debugLog("Successfully connected to proxy chain");
     } catch (error) {
       console.error("Failed to connect to proxy chain:", error);
-      alert(t("Failed to connect to proxy chain") || "连接链式代理失败");
+      alert(t("proxies.page.chain.connectFailed") || "连接链式代理失败");
     } finally {
       setIsConnecting(false);
     }
-  }, [proxyChain, isConnected, t, mutateProxies, mode, selectedGroup]);
+  }, [
+    proxyChain,
+    isConnected,
+    t,
+    mutateProxies,
+    mode,
+    selectedGroup,
+    onUpdateChain,
+  ]);
 
   const proxyChainRef = useRef(proxyChain);
   const onUpdateChainRef = useRef(onUpdateChain);
@@ -373,10 +398,11 @@ export const ProxyChain = ({
                   type: proxy.type,
                   delay: undefined,
                 })) || [];
-              onUpdateChain(chainItems);
+              if (chainItems.length > 0) {
+                onUpdateChain(chainItems);
+              }
             } catch (parseError) {
               console.error("Failed to parse YAML:", parseError);
-              onUpdateChain([]);
             }
           })
           .catch((importError) => {
@@ -396,19 +422,16 @@ export const ProxyChain = ({
                   type: proxy.type,
                   delay: undefined,
                 })) || [];
-              onUpdateChain(chainItems);
+              if (chainItems.length > 0) {
+                onUpdateChain(chainItems);
+              }
             } catch (jsonError) {
               console.error("Failed to parse as JSON either:", jsonError);
-              onUpdateChain([]);
             }
           });
       } catch (error) {
         console.error("Failed to process chain config data:", error);
-        onUpdateChain([]);
       }
-    } else if (chainConfigData === "") {
-      // Empty string means no proxies available, show empty state
-      onUpdateChain([]);
     }
   }, [chainConfigData, onUpdateChain]);
 
@@ -471,13 +494,16 @@ export const ProxyChain = ({
           mb: 2,
         }}
       >
-        <Typography variant="h6">{t("Chain Proxy Config")}</Typography>
+        <Typography variant="h6">{t("proxies.page.chain.header")}</Typography>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           {proxyChain.length > 0 && (
             <IconButton
               size="small"
               onClick={() => {
                 updateProxyChainConfigInRuntime(null);
+                localStorage.removeItem("proxy-chain-group");
+                localStorage.removeItem("proxy-chain-exit-node");
+                localStorage.removeItem("proxy-chain-items");
                 onUpdateChain([]);
               }}
               sx={{
@@ -486,7 +512,9 @@ export const ProxyChain = ({
                   backgroundColor: theme.palette.error.light + "20",
                 },
               }}
-              title={t("Delete Chain Config") || "删除链式配置"}
+              title={
+                t("proxies.page.actions.clearChainConfig") || "删除链式配置"
+              }
             >
               <DeleteIcon fontSize="small" />
             </IconButton>
@@ -507,16 +535,16 @@ export const ProxyChain = ({
             }}
             title={
               proxyChain.length < 2
-                ? t("Chain proxy requires at least 2 nodes") ||
+                ? t("proxies.page.chain.minimumNodes") ||
                   "链式代理至少需要2个节点"
                 : undefined
             }
           >
             {isConnecting
-              ? t("Connecting...") || "连接中..."
+              ? t("proxies.page.actions.connecting") || "连接中..."
               : isConnected
-                ? t("Disconnect") || "断开"
-                : t("Connect") || "连接"}
+                ? t("proxies.page.actions.disconnect") || "断开"
+                : t("proxies.page.actions.connect") || "连接"}
           </Button>
         </Box>
       </Box>
@@ -526,10 +554,9 @@ export const ProxyChain = ({
         sx={{ mb: 2 }}
       >
         {proxyChain.length === 1
-          ? t(
-              "Chain proxy requires at least 2 nodes. Please add one more node.",
-            ) || "链式代理至少需要2个节点，请再添加一个节点。"
-          : t("Click nodes in order to add to proxy chain") ||
+          ? t("proxies.page.chain.minimumNodesHint") ||
+            "链式代理至少需要2个节点，请再添加一个节点。"
+          : t("proxies.page.chain.instruction") ||
             "按顺序点击节点添加到代理链中"}
       </Alert>
 
@@ -544,7 +571,7 @@ export const ProxyChain = ({
               color: theme.palette.text.secondary,
             }}
           >
-            <Typography>{t("No proxy chain configured")}</Typography>
+            <Typography>{t("proxies.page.chain.empty")}</Typography>
           </Box>
         ) : (
           <DndContext

@@ -6,11 +6,11 @@ import {
   alpha,
   ListItem,
   ListItemButton,
-  ListItemText,
   ListItemIcon,
+  ListItemText,
 } from "@mui/material";
 import type { CSSProperties, ReactNode } from "react";
-import { useMatch, useResolvedPath, useNavigate } from "react-router";
+import { useMatch, useNavigate, useResolvedPath } from "react-router";
 
 import { useVerge } from "@/hooks/use-verge";
 
@@ -37,8 +37,13 @@ export const LayoutItem = (props: Props) => {
   const match = useMatch({ path: resolved.pathname, end: true });
   const navigate = useNavigate();
 
-  const { setNodeRef, attributes, listeners, style, isDragging } =
+  const { setNodeRef, attributes, listeners, style, isDragging, disabled } =
     sortable ?? {};
+
+  const draggable = Boolean(sortable) && !disabled;
+  const dragHandleProps = draggable
+    ? { ...(attributes ?? {}), ...(listeners ?? {}) }
+    : undefined;
 
   return (
     <ListItem
@@ -51,6 +56,7 @@ export const LayoutItem = (props: Props) => {
     >
       <ListItemButton
         selected={!!match}
+        {...(dragHandleProps ?? {})}
         sx={[
           {
             borderRadius: 2,
@@ -58,7 +64,8 @@ export const LayoutItem = (props: Props) => {
             paddingLeft: 1,
             paddingRight: 1,
             marginRight: 1.25,
-            cursor: sortable && !sortable.disabled ? "grab" : "pointer",
+            cursor: draggable ? "grab" : "pointer",
+            "&:active": draggable ? { cursor: "grabbing" } : {},
             "& .MuiListItemText-primary": {
               color: "text.primary",
               fontWeight: "700",
@@ -70,7 +77,6 @@ export const LayoutItem = (props: Props) => {
                 ? alpha(primary.main, 0.15)
                 : alpha(primary.main, 0.35);
             const color = mode === "light" ? "#1f1f1f" : "#ffffff";
-
             return {
               "&.Mui-selected": { bgcolor },
               "&.Mui-selected:hover": { bgcolor },
@@ -79,15 +85,23 @@ export const LayoutItem = (props: Props) => {
           },
         ]}
         onClick={() => navigate(to)}
-        {...(attributes ?? {})}
-        {...(listeners ?? {})}
       >
         {(menu_icon === "monochrome" || !menu_icon) && (
-          <ListItemIcon sx={{ color: "text.primary", marginLeft: "6px" }}>
+          <ListItemIcon
+            sx={{
+              color: "text.primary",
+              marginLeft: "6px",
+              cursor: draggable ? "grab" : "inherit",
+            }}
+          >
             {icon[0]}
           </ListItemIcon>
         )}
-        {menu_icon === "colorful" && <ListItemIcon>{icon[1]}</ListItemIcon>}
+        {menu_icon === "colorful" && (
+          <ListItemIcon sx={{ cursor: draggable ? "grab" : "inherit" }}>
+            {icon[1]}
+          </ListItemIcon>
+        )}
         <ListItemText
           sx={{
             textAlign: "center",

@@ -1,7 +1,7 @@
 use regex::Regex;
 use reqwest::Client;
 
-use crate::{logging, utils::logging::Type};
+use clash_verge_logging::{Type, logging};
 
 use super::UnlockItem;
 use super::utils::{country_code_to_emoji, get_local_date_string};
@@ -18,12 +18,7 @@ pub(super) async fn check_gemini(client: &Client) -> UnlockItem {
                 let re = match Regex::new(r#",2,1,200,"([A-Z]{3})""#) {
                     Ok(re) => re,
                     Err(e) => {
-                        logging!(
-                            error,
-                            Type::Network,
-                            "Failed to compile Gemini regex: {}",
-                            e
-                        );
+                        logging!(error, Type::Network, "Failed to compile Gemini regex: {}", e);
                         return UnlockItem {
                             name: "Gemini".to_string(),
                             status: "Failed".to_string(),

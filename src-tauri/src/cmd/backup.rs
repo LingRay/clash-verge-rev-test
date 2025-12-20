@@ -1,5 +1,5 @@
 use super::CmdResult;
-use crate::{cmd::StringifyErr, feat};
+use crate::{cmd::StringifyErr as _, feat};
 use feat::LocalBackupFile;
 use smartstring::alias::String;
 
@@ -30,7 +30,5 @@ pub async fn restore_local_backup(filename: String) -> CmdResult<()> {
 /// Export local backup to a user selected destination
 #[tauri::command]
 pub async fn export_local_backup(filename: String, destination: String) -> CmdResult<()> {
-    feat::export_local_backup(filename, destination)
-        .await
-        .stringify_err()
+    feat::export_local_backup(filename, destination).await.stringify_err()
 }

@@ -34,11 +34,16 @@ import { useNavigate } from "react-router";
 import { delayGroup, healthcheckProxyProvider } from "tauri-plugin-mihomo-api";
 
 import { EnhancedCard } from "@/components/home/enhanced-card";
+import {
+  useClashConfig,
+  useProxiesData,
+  useRulesData,
+} from "@/hooks/use-clash-data";
 import { useProfiles } from "@/hooks/use-profiles";
 import { useProxySelection } from "@/hooks/use-proxy-selection";
 import { useVerge } from "@/hooks/use-verge";
-import { useAppData } from "@/providers/app-data-context";
 import delayManager from "@/services/delay";
+import { debugLog } from "@/utils/debug";
 
 // 本地存储的键名
 const STORAGE_KEY_GROUP = "clash-verge-selected-proxy-group";
@@ -100,10 +105,13 @@ export const CurrentProxyCard = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const theme = useTheme();
-  const { proxies, clashConfig, refreshProxy, rules } = useAppData();
+  const { proxies, refreshProxy } = useProxiesData();
+  const { clashConfig } = useClashConfig();
+  const { rules } = useRulesData();
   const { verge } = useVerge();
   const { current: currentProfile } = useProfiles();
   const autoDelayEnabled = verge?.enable_auto_delay_detection ?? false;
+  const defaultLatencyTimeout = verge?.default_latency_timeout;
   const currentProfileId = currentProfile?.uid || null;
 
   const getProfileStorageKey = useCallback(
@@ -537,7 +545,7 @@ export const CurrentProxyCard = () => {
 
     const proxyRecord = latestProxyRecordRef.current;
     if (!proxyRecord) {
-      console.log(
+      debugLog(
         `[CurrentProxyCard] 自动延迟检测跳过，组: ${groupName}, 节点: ${proxyName} 未找到`,
       );
       return;
@@ -548,7 +556,7 @@ export const CurrentProxyCard = () => {
     const timeout = latestTimeoutRef.current || 10000;
 
     try {
-      console.log(
+      debugLog(
         `[CurrentProxyCard] 自动检测当前节点延迟，组: ${groupName}, 节点: ${proxyName}`,
       );
       if (proxyRecord.provider) {
@@ -645,7 +653,7 @@ export const CurrentProxyCard = () => {
     const groupName = state.selection.group;
     if (!groupName || isDirectMode) return;
 
-    console.log(`[CurrentProxyCard] 开始测试所有延迟，组: ${groupName}`);
+    debugLog(`[CurrentProxyCard] 开始测试所有延迟，组: ${groupName}`);
 
     const timeout = verge?.default_latency_timeout || 10000;
 
@@ -685,13 +693,13 @@ export const CurrentProxyCard = () => {
       }
     }
 
-    console.log(
+    debugLog(
       `[CurrentProxyCard] 找到代理数量: ${proxyNames.length}, 提供者数量: ${providers.size}`,
     );
 
     // 测试提供者的节点
     if (providers.size > 0) {
-      console.log(`[CurrentProxyCard] 开始测试提供者节点`);
+      debugLog(`[CurrentProxyCard] 开始测试提供者节点`);
       await Promise.allSettled(
         [...providers].map((p) => healthcheckProxyProvider(p)),
       );
@@ -700,14 +708,14 @@ export const CurrentProxyCard = () => {
     // 测试非提供者的节点
     if (proxyNames.length > 0) {
       const url = delayManager.getUrl(groupName);
-      console.log(`[CurrentProxyCard] 测试URL: ${url}, 超时: ${timeout}ms`);
+      debugLog(`[CurrentProxyCard] 测试URL: ${url}, 超时: ${timeout}ms`);
 
       try {
         await Promise.race([
           delayManager.checkListDelay(proxyNames, groupName, timeout),
           delayGroup(groupName, url, timeout),
         ]);
-        console.log(`[CurrentProxyCard] 延迟测试完成，组: ${groupName}`);
+        debugLog(`[CurrentProxyCard] 延迟测试完成，组: ${groupName}`);
       } catch (error) {
         console.error(
           `[CurrentProxyCard] 延迟测试出错，组: ${groupName}`,
@@ -735,20 +743,38 @@ export const CurrentProxyCard = () => {
 
       if (sortType === 1) {
         const refreshTick = delaySortRefresh;
+        const effectiveTimeout =
+          typeof defaultLatencyTimeout === "number" && defaultLatencyTimeout > 0
+            ? defaultLatencyTimeout
+            : 10000;
+
+        const categorizeDelay = (delay: number): [number, number] => {
+          if (!Number.isFinite(delay)) return [5, Number.MAX_SAFE_INTEGER];
+          if (delay > 1e5) return [4, delay];
+          if (delay === 0 || (delay >= effectiveTimeout && delay <= 1e5)) {
+            return [3, delay || effectiveTimeout];
+          }
+          if (delay < 0) return [5, Number.MAX_SAFE_INTEGER];
+          return [0, delay];
+        };
+
         list.sort((a, b) => {
           const recordA = state.proxyData.records[a.name];
           const recordB = state.proxyData.records[b.name];
 
-          if (!recordA) return 1;
-          if (!recordB) return -1;
+          const [ar, av] = recordA
+            ? categorizeDelay(
+                delayManager.getDelayFix(recordA, state.selection.group),
+              )
+            : [6, Number.MAX_SAFE_INTEGER];
+          const [br, bv] = recordB
+            ? categorizeDelay(
+                delayManager.getDelayFix(recordB, state.selection.group),
+              )
+            : [6, Number.MAX_SAFE_INTEGER];
 
-          const ad = delayManager.getDelayFix(recordA, state.selection.group);
-          const bd = delayManager.getDelayFix(recordB, state.selection.group);
-
-          if (ad === -1 || ad === -2) return 1;
-          if (bd === -1 || bd === -2) return -1;
-
-          if (ad !== bd) return ad - bd;
+          if (ar !== br) return ar - br;
+          if (av !== bv) return av - bv;
           return refreshTick >= 0 ? a.name.localeCompare(b.name) : 0;
         });
       } else {
@@ -793,6 +819,7 @@ export const CurrentProxyCard = () => {
     state.selection.group,
     sortType,
     delaySortRefresh,
+    defaultLatencyTimeout,
   ]);
 
   // 获取排序图标
@@ -811,11 +838,11 @@ export const CurrentProxyCard = () => {
   const getSortTooltip = (): string => {
     switch (sortType) {
       case 0:
-        return t("Sort by default");
+        return t("proxies.page.tooltips.sortDefault");
       case 1:
-        return t("Sort by delay");
+        return t("proxies.page.tooltips.sortDelay");
       case 2:
-        return t("Sort by name");
+        return t("proxies.page.tooltips.sortName");
       default:
         return "";
     }
@@ -823,7 +850,7 @@ export const CurrentProxyCard = () => {
 
   return (
     <EnhancedCard
-      title={t("Current Node")}
+      title={t("home.components.currentProxy.title")}
       icon={
         <Tooltip
           title={
@@ -840,7 +867,9 @@ export const CurrentProxyCard = () => {
       iconColor={currentProxy ? "primary" : undefined}
       action={
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-          <Tooltip title={t("Delay check")}>
+          <Tooltip
+            title={t("home.components.currentProxy.actions.refreshDelay")}
+          >
             <span>
               <IconButton
                 size="small"
@@ -868,7 +897,7 @@ export const CurrentProxyCard = () => {
             sx={{ borderRadius: 1.5 }}
             endIcon={<ChevronRight fontSize="small" />}
           >
-            {t("Label-Proxies")}
+            {t("layout.components.navigation.tabs.proxies")}
           </Button>
         </Box>
       }
@@ -906,7 +935,7 @@ export const CurrentProxyCard = () => {
                 {isGlobalMode && (
                   <Chip
                     size="small"
-                    label={t("Global Mode")}
+                    label={t("home.components.currentProxy.labels.globalMode")}
                     color="primary"
                     sx={{ mr: 0.5 }}
                   />
@@ -914,7 +943,7 @@ export const CurrentProxyCard = () => {
                 {isDirectMode && (
                   <Chip
                     size="small"
-                    label={t("Direct Mode")}
+                    label={t("home.components.currentProxy.labels.directMode")}
                     color="success"
                     sx={{ mr: 0.5 }}
                   />
@@ -954,12 +983,14 @@ export const CurrentProxyCard = () => {
             size="small"
             sx={{ mb: 1.5 }}
           >
-            <InputLabel id="proxy-group-select-label">{t("Group")}</InputLabel>
+            <InputLabel id="proxy-group-select-label">
+              {t("home.components.currentProxy.labels.group")}
+            </InputLabel>
             <Select
               labelId="proxy-group-select-label"
               value={state.selection.group}
               onChange={handleGroupChange}
-              label={t("Group")}
+              label={t("home.components.currentProxy.labels.group")}
               disabled={isGlobalMode || isDirectMode}
             >
               {state.proxyData.groups.map((group) => (
@@ -972,12 +1003,14 @@ export const CurrentProxyCard = () => {
 
           {/* 代理节点选择器 */}
           <FormControl fullWidth variant="outlined" size="small" sx={{ mb: 0 }}>
-            <InputLabel id="proxy-select-label">{t("Proxy")}</InputLabel>
+            <InputLabel id="proxy-select-label">
+              {t("home.components.currentProxy.labels.proxy")}
+            </InputLabel>
             <Select
               labelId="proxy-select-label"
               value={state.selection.proxy}
               onChange={handleProxyChange}
-              label={t("Proxy")}
+              label={t("home.components.currentProxy.labels.proxy")}
               disabled={isDirectMode}
               renderValue={renderProxyValue}
               MenuProps={{
@@ -1033,7 +1066,7 @@ export const CurrentProxyCard = () => {
       ) : (
         <Box sx={{ textAlign: "center", py: 4 }}>
           <Typography variant="body1" color="text.secondary">
-            {t("No active proxy node")}
+            {t("home.components.currentProxy.labels.noActiveNode")}
           </Typography>
         </Box>
       )}

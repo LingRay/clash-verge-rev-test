@@ -15,19 +15,20 @@ import { useTranslation } from "react-i18next";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { delayGroup, healthcheckProxyProvider } from "tauri-plugin-mihomo-api";
 
+import { useProxiesData } from "@/hooks/use-clash-data";
 import { useProxySelection } from "@/hooks/use-proxy-selection";
 import { useVerge } from "@/hooks/use-verge";
-import { useAppData } from "@/providers/app-data-context";
 import { updateProxyChainConfigInRuntime } from "@/services/cmds";
 import delayManager from "@/services/delay";
+import { debugLog } from "@/utils/debug";
 
 import { BaseEmpty } from "../base";
 import { ScrollTopButton } from "../layout/scroll-top-button";
 
 import { ProxyChain } from "./proxy-chain";
 import {
-  ProxyGroupNavigator,
   DEFAULT_HOVER_DELAY,
+  ProxyGroupNavigator,
 } from "./proxy-group-navigator";
 import { ProxyRender } from "./proxy-render";
 import { useRenderList } from "./use-render-list";
@@ -50,8 +51,26 @@ const VirtuosoFooter = () => <div style={{ height: "8px" }} />;
 export const ProxyGroups = (props: Props) => {
   const { t } = useTranslation();
   const { mode, isChainMode = false, chainConfigData } = props;
-  const [proxyChain, setProxyChain] = useState<ProxyChainItem[]>([]);
+  const [proxyChain, setProxyChain] = useState<ProxyChainItem[]>(() => {
+    try {
+      const saved = localStorage.getItem("proxy-chain-items");
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch {
+      // ignore
+    }
+    return [];
+  });
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (proxyChain.length > 0) {
+      localStorage.setItem("proxy-chain-items", JSON.stringify(proxyChain));
+    } else {
+      localStorage.removeItem("proxy-chain-items");
+    }
+  }, [proxyChain]);
   const [ruleMenuAnchor, setRuleMenuAnchor] = useState<null | HTMLElement>(
     null,
   );
@@ -61,9 +80,15 @@ export const ProxyGroups = (props: Props) => {
   }>({ open: false, message: "" });
 
   const { verge } = useVerge();
-  const { proxies: proxiesData } = useAppData();
+  const { proxies: proxiesData } = useProxiesData();
   const groups = proxiesData?.groups;
-  const availableGroups = useMemo(() => groups ?? [], [groups]);
+  const availableGroups = useMemo(() => {
+    if (!groups) return [];
+    // 在链式代理模式下，仅显示支持选择节点的 Selector 代理组
+    return isChainMode
+      ? groups.filter((g: any) => g.type === "Selector")
+      : groups;
+  }, [groups, isChainMode]);
 
   const defaultRuleGroup = useMemo(() => {
     if (isChainMode && mode === "rule" && availableGroups.length > 0) {
@@ -224,10 +249,11 @@ export const ProxyGroups = (props: Props) => {
     setSelectedGroup(groupName);
     handleGroupMenuClose();
 
-    // 在链式代理模式的规则模式下，切换代理组时清空链式代理配置
     if (isChainMode && mode === "rule") {
       updateProxyChainConfigInRuntime(null);
-      // 同时清空右侧链式代理配置
+      localStorage.removeItem("proxy-chain-group");
+      localStorage.removeItem("proxy-chain-exit-node");
+      localStorage.removeItem("proxy-chain-items");
       setProxyChain([]);
     }
   };
@@ -239,7 +265,7 @@ export const ProxyGroups = (props: Props) => {
         setProxyChain((prev) => {
           // 检查是否已经存在相同名称的代理，防止重复添加
           if (prev.some((item) => item.name === proxy.name)) {
-            const warningMessage = t("Proxy node already exists in chain");
+            const warningMessage = t("proxies.page.chain.duplicateNode");
             setDuplicateWarning({
               open: true,
               message: warningMessage,
@@ -274,7 +300,7 @@ export const ProxyGroups = (props: Props) => {
 
   // 测全部延迟
   const handleCheckAll = useLockFn(async (groupName: string) => {
-    console.log(`[ProxyGroups] 开始测试所有延迟，组: ${groupName}`);
+    debugLog(`[ProxyGroups] 开始测试所有延迟，组: ${groupName}`);
 
     const proxies = renderList
       .filter(
@@ -283,37 +309,37 @@ export const ProxyGroups = (props: Props) => {
       .flatMap((e) => e.proxyCol || e.proxy!)
       .filter(Boolean);
 
-    console.log(`[ProxyGroups] 找到代理数量: ${proxies.length}`);
+    debugLog(`[ProxyGroups] 找到代理数量: ${proxies.length}`);
 
     const providers = new Set(proxies.map((p) => p!.provider!).filter(Boolean));
 
     if (providers.size) {
-      console.log(`[ProxyGroups] 发现提供者，数量: ${providers.size}`);
+      debugLog(`[ProxyGroups] 发现提供者，数量: ${providers.size}`);
       Promise.allSettled(
         [...providers].map((p) => healthcheckProxyProvider(p)),
       ).then(() => {
-        console.log(`[ProxyGroups] 提供者健康检查完成`);
+        debugLog(`[ProxyGroups] 提供者健康检查完成`);
         onProxies();
       });
     }
 
     const names = proxies.filter((p) => !p!.provider).map((p) => p!.name);
-    console.log(`[ProxyGroups] 过滤后需要测试的代理数量: ${names.length}`);
+    debugLog(`[ProxyGroups] 过滤后需要测试的代理数量: ${names.length}`);
 
     const url = delayManager.getUrl(groupName);
-    console.log(`[ProxyGroups] 测试URL: ${url}, 超时: ${timeout}ms`);
+    debugLog(`[ProxyGroups] 测试URL: ${url}, 超时: ${timeout}ms`);
 
     try {
       await Promise.race([
         delayManager.checkListDelay(names, groupName, timeout),
         delayGroup(groupName, url, timeout).then((result) => {
-          console.log(
+          debugLog(
             `[ProxyGroups] getGroupProxyDelays返回结果数量:`,
             Object.keys(result || {}).length,
           );
         }), // 查询group delays 将清除fixed(不关注调用结果)
       ]);
-      console.log(`[ProxyGroups] 延迟测试完成，组: ${groupName}`);
+      debugLog(`[ProxyGroups] 延迟测试完成，组: ${groupName}`);
     } catch (error) {
       console.error(`[ProxyGroups] 延迟测试出错，组: ${groupName}`, error);
     } finally {
@@ -372,7 +398,7 @@ export const ProxyGroups = (props: Props) => {
   }, [renderList]);
 
   if (mode === "direct") {
-    return <BaseEmpty text={t("clash_mode_direct")} />;
+    return <BaseEmpty textKey="proxies.page.messages.directMode" />;
   }
 
   if (isChainMode) {
@@ -403,7 +429,7 @@ export const ProxyGroups = (props: Props) => {
                       variant="h6"
                       sx={{ fontWeight: 600, fontSize: "16px" }}
                     >
-                      {t("Proxy Rules")}
+                      {t("proxies.page.rules.title")}
                     </Typography>
                     {currentGroup && (
                       <Box
@@ -442,7 +468,7 @@ export const ProxyGroups = (props: Props) => {
                         variant="body2"
                         sx={{ mr: 0.5, fontSize: "12px" }}
                       >
-                        {t("Select Rules")}
+                        {t("proxies.page.rules.select")}
                       </Typography>
                       <ExpandMoreRounded fontSize="small" />
                     </IconButton>
