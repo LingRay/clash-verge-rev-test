@@ -4,6 +4,8 @@ use clash_verge_logging::{Type, logging};
 use nanoid::nanoid;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_yaml_ng::Mapping;
+#[cfg(target_os = "windows")]
+use std::path::Path;
 use std::{path::PathBuf, str::FromStr};
 
 /// read data from yaml as struct T
@@ -135,17 +137,23 @@ pub fn linux_elevator() -> String {
     }
 }
 
-/// return the string literal error
-#[macro_export]
-macro_rules! ret_err {
-    ($str: expr) => {
-        return Err($str.into())
-    };
-}
+#[cfg(target_os = "windows")]
+/// copy the file to the dist path and return the dist path
+pub fn snapshot_path(original_path: &Path) -> Result<PathBuf> {
+    let temp_dir = original_path
+        .parent()
+        .ok_or_else(|| anyhow!("Invalid log path"))?
+        .join("temp");
 
-#[macro_export]
-macro_rules! t {
-    ($en:expr, $zh:expr, $use_zh:expr) => {
-        if $use_zh { $zh } else { $en }
-    };
+    std::fs::create_dir_all(&temp_dir)?;
+
+    let temp_path = temp_dir.join(format!(
+        "{}_{}.log",
+        original_path.file_stem().unwrap_or_default().to_string_lossy(),
+        chrono::Local::now().format("%Y-%m-%d_%H-%M-%S")
+    ));
+
+    std::fs::copy(original_path, &temp_path)?;
+
+    Ok(temp_path)
 }

@@ -1,5 +1,6 @@
 use super::CmdResult;
 use super::StringifyErr as _;
+use crate::utils::window_manager::WindowManager;
 use crate::{
     config::{
         Config, IProfiles, PrfItem, PrfOption,
@@ -13,10 +14,9 @@ use crate::{
     feat,
     module::auto_backup::{AutoBackupManager, AutoBackupTrigger},
     process::AsyncHandler,
-    ret_err,
     utils::{dirs, help},
 };
-use clash_verge_draft::SharedBox;
+use clash_verge_draft::SharedDraft;
 use clash_verge_logging::{Type, logging};
 use scopeguard::defer;
 use smartstring::alias::String;
@@ -26,7 +26,7 @@ use std::time::Duration;
 static CURRENT_SWITCHING_PROFILE: AtomicBool = AtomicBool::new(false);
 
 #[tauri::command]
-pub async fn get_profiles() -> CmdResult<SharedBox<IProfiles>> {
+pub async fn get_profiles() -> CmdResult<SharedDraft<IProfiles>> {
     logging!(debug, Type::Cmd, "获取配置文件列表");
     let draft = Config::profiles().await;
     let data = draft.data_arc();
@@ -311,7 +311,9 @@ async fn handle_success(current_value: Option<&String>) -> CmdResult<bool> {
         logging!(warn, Type::Cmd, "Warning: 异步保存配置文件失败: {e}");
     }
 
-    if let Some(current) = current_value {
+    if let Some(current) = current_value
+        && WindowManager::get_main_window().is_some()
+    {
         logging!(info, Type::Cmd, "向前端发送配置变更事件: {}", current);
         handle::Handle::notify_profile_changed(current.to_owned());
     }
@@ -455,7 +457,7 @@ pub async fn view_profile(index: String) -> CmdResult {
 
     let path = dirs::app_profiles_dir().stringify_err()?.join(file.as_str());
     if !path.exists() {
-        ret_err!("the file not found");
+        return CmdResult::Err(format!("file not found \"{}\"", path.display()).into());
     }
 
     help::open_file(path).stringify_err()

@@ -42,15 +42,13 @@ import {
 import { useTranslation } from "react-i18next";
 import { Virtuoso } from "react-virtuoso";
 
-import { Switch } from "@/components/base";
+import { BaseSearchBox, Switch } from "@/components/base";
 import { RuleItem } from "@/components/profile/rule-item";
 import { readProfileFile, saveProfileFile } from "@/services/cmds";
 import { showNotice } from "@/services/notice-service";
 import { useThemeMode } from "@/services/states";
 import type { TranslationKey } from "@/types/generated/i18n-keys";
 import getSystem from "@/utils/get-system";
-
-import { BaseSearchBox } from "../base/base-search-box";
 
 interface Props {
   groupsUid: string;
@@ -506,7 +504,13 @@ export const RulesEditorViewer = (props: Props) => {
   });
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="xl" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth="xl"
+      fullWidth
+      disableEnforceFocus={!visualization}
+    >
       <DialogTitle>
         {
           <Box display="flex" justifyContent="space-between">
@@ -553,11 +557,12 @@ export const RulesEditorViewer = (props: Props) => {
                     t(RULE_TYPE_LABEL_KEYS[option.name] ?? option.name)
                   }
                   renderOption={(props, option) => {
+                    const { key, ...optionProps } = props;
                     const label = t(
                       RULE_TYPE_LABEL_KEYS[option.name] ?? option.name,
                     );
                     return (
-                      <li {...props} title={label}>
+                      <li key={key} {...optionProps} title={label}>
                         {label}
                       </li>
                     );
@@ -620,9 +625,10 @@ export const RulesEditorViewer = (props: Props) => {
                     t(PROXY_POLICY_LABEL_KEYS[option] ?? option)
                   }
                   renderOption={(props, option) => {
+                    const { key, ...optionProps } = props;
                     const label = t(PROXY_POLICY_LABEL_KEYS[option] ?? option);
                     return (
-                      <li {...props} title={label}>
+                      <li key={key} {...optionProps} title={label}>
                         {label}
                       </li>
                     );

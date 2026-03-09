@@ -48,7 +48,7 @@ import { Controller, useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import { Virtuoso } from "react-virtuoso";
 
-import { Switch } from "@/components/base";
+import { BaseSearchBox, Switch } from "@/components/base";
 import { GroupItem } from "@/components/profile/group-item";
 import {
   getNetworkInterfaces,
@@ -59,8 +59,6 @@ import { showNotice } from "@/services/notice-service";
 import { useThemeMode } from "@/services/states";
 import type { TranslationKey } from "@/types/generated/i18n-keys";
 import getSystem from "@/utils/get-system";
-
-import { BaseSearchBox } from "../base/base-search-box";
 
 interface Props {
   proxiesUid: string;
@@ -427,7 +425,13 @@ export const GroupsEditorViewer = (props: Props) => {
   });
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="xl" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth="xl"
+      fullWidth
+      disableEnforceFocus={!visualization}
+    >
       <DialogTitle>
         {
           <Box display="flex" justifyContent="space-between">
@@ -486,11 +490,18 @@ export const GroupsEditorViewer = (props: Props) => {
                         ]}
                         value={field.value}
                         getOptionLabel={translateStrategy}
-                        renderOption={(props, option) => (
-                          <li {...props} title={translateStrategy(option)}>
-                            {translateStrategy(option)}
-                          </li>
-                        )}
+                        renderOption={(props, option) => {
+                          const { key, ...optionProps } = props;
+                          return (
+                            <li
+                              key={key}
+                              {...optionProps}
+                              title={translateStrategy(option)}
+                            >
+                              {translateStrategy(option)}
+                            </li>
+                          );
+                        }}
                         onChange={(_, value) => value && field.onChange(value)}
                         renderInput={(params) => <TextField {...params} />}
                       />
@@ -553,11 +564,18 @@ export const GroupsEditorViewer = (props: Props) => {
                         disableCloseOnSelect
                         onChange={(_, value) => value && field.onChange(value)}
                         renderInput={(params) => <TextField {...params} />}
-                        renderOption={(props, option) => (
-                          <li {...props} title={translatePolicy(option)}>
-                            {translatePolicy(option)}
-                          </li>
-                        )}
+                        renderOption={(props, option) => {
+                          const { key, ...optionProps } = props;
+                          return (
+                            <li
+                              key={key}
+                              {...optionProps}
+                              title={translatePolicy(option)}
+                            >
+                              {translatePolicy(option)}
+                            </li>
+                          );
+                        }}
                         getOptionLabel={translatePolicy}
                       />
                     </Item>
@@ -597,7 +615,7 @@ export const GroupsEditorViewer = (props: Props) => {
                       />
                       <TextField
                         autoComplete="new-password"
-                        placeholder="https://cp.cloudflare.com/generate_204"
+                        placeholder="http://1.0.0.1"
                         size="small"
                         sx={{ width: "calc(100% - 150px)" }}
                         {...field}
@@ -822,6 +840,10 @@ export const GroupsEditorViewer = (props: Props) => {
                           "Hysteria2",
                           "WireGuard",
                           "Tuic",
+                          "Mieru",
+                          "Masque",
+                          "AnyTLS",
+                          "Sudoku",
                           "Relay",
                           "Selector",
                           "Fallback",
